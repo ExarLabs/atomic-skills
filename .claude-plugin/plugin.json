@@ -1,0 +1,6 @@
+{
+  "name": "atomic-skills",
+  "version": "0.1.0",
+  "description": "Atomi ügyfél-oldali Claude Code skillek. Első skill: a feature-felmérő.",
+  "author": {"name": "ExarLabs"}
+}

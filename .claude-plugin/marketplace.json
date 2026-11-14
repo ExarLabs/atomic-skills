@@ -1,0 +1,11 @@
+{
+  "name": "atomic-skills",
+  "owner": {"name": "ExarLabs"},
+  "plugins": [
+    {
+      "name": "atomic-skills",
+      "source": "./",
+      "description": "Atomi ügyfél-oldali Claude Code skillek. Első skill: a feature-felmérő."
+    }
+  ]
+}
