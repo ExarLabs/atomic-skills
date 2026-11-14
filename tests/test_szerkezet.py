@@ -1,5 +1,6 @@
 """A repó szerkezetének tesztjei: verzió, fejlécek, a skill szabályai és parancsai."""
 import argparse
+import ast
 import importlib.util
 import json
 import pathlib
@@ -40,6 +41,17 @@ EP_RE = re.compile(r"(?<![\w-])EP ([a-z][a-z-]*)")
 
 def skill_fajlok():
     return sorted(SKILLEK.glob("*/SKILL.md"))
+
+
+def teendo_ertekek():
+    """A kapcsolódás teendő-kódjai: a CLI teendo_valaszt függvényének return-értékei."""
+    for node in ast.walk(ast.parse(CLI.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.FunctionDef) and node.name == "teendo_valaszt":
+            return {c.value for r in ast.walk(node) if isinstance(r, ast.Return) and r.value is not None
+                    for c in ast.walk(r.value)
+                    if isinstance(c, ast.Constant) and isinstance(c.value, str)
+                    and re.fullmatch(r"[A-Z_]+", c.value)}
+    raise AssertionError("teendo_valaszt nem található")
 
 
 def kozos_blokk(szoveg):
@@ -180,6 +192,26 @@ class Szerkezet(unittest.TestCase):
     def test_parancs_fajl_a_felmeresre_mutat(self):
         szoveg = (ROOT / "commands" / "felmero.md").read_text(encoding="utf-8")
         self.assertIn("Töltsd be az `erp-plan-felmeres` skillt, és kövesd az Indulás szakaszát.", szoveg)
+
+    # P1-11: a Frappe-, a kapcsolódási és a PAROS-skill
+
+    def test_het_skill_van(self):
+        nevek = sorted(p.parent.name for p in skill_fajlok())
+        self.assertEqual(nevek, sorted(["erp-plan", "erp-plan-munkak", "erp-plan-felmeres",
+                                        "erp-plan-ellenorzes", "erp-plan-frappe", "erp-plan-kapcsolat",
+                                        "erp-plan-paros"]))
+
+    def test_paros_ket_parancsa_szo_szerint(self):
+        szoveg = (SKILLEK / "erp-plan-paros" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("git clone https://github.com/ExarLabs/paros-advisor.git ~/.paros-advisor", szoveg)
+        self.assertIn("python3 ~/.paros-advisor/install/install.py", szoveg)
+
+    def test_kapcsolat_minden_teendot_kezel(self):
+        szoveg = (SKILLEK / "erp-plan-kapcsolat" / "SKILL.md").read_text(encoding="utf-8")
+        ertekek = teendo_ertekek()
+        self.assertEqual(len(ertekek), 7)
+        for teendo in ertekek:
+            self.assertIn("`%s`" % teendo, szoveg)
 
     def test_folyamat_van_es_rovid(self):
         folyamat = SKILLEK / "erp-plan" / "references" / "folyamat.md"
