@@ -1,6 +1,6 @@
 ---
 name: erp-plan-felmeres
-description: Feature-felmérő az Atomi ügyfeleinek. Kikérdez egy fejlesztési igényről (szóban vagy írásban), és mindent az Atomi portálra ment: a beszélgetést, a specifikáció elemeit bizonyítékkal, a fájlokat. Bármikor, másik gépről is folytatható. Használd, ha a felhasználó új igényt, feature-t, automatizálási ötletet akar leírni, egy megkezdett felmérést folytatna, vagy a régi projektjeit nézné át. Hívószavak: "új feature", "új igény", "folytassuk a felmérést", "felmérő", "mit kérdeztél múltkor", "töltsd fel ezt a dokumentumot a projekthez".
+description: "ERP Plan felmérés: kikérdez egy fejlesztési igényről, egyszerre egy kérdéssel, és mindent a szerverre ment: a beszélgetést, a leírás elemeit szó szerinti idézettel, a fájlokat. Bármikor, másik gépről is folytatható. Használd, ha a felhasználó egy munkát le akar írni, a kikérdezést folytatná, dokumentumot adna hozzá, összefoglalót kér vagy beküldené. Hívószavak: 'kérdezz ki', 'új feature', 'új igény', 'folytassuk a felmérést', 'mit kérdeztél múltkor', 'töltsd fel ezt a dokumentumot', 'küldjük be'. English: requirement interview for one work item, one question at a time, everything saved on the server with verbatim evidence. Triggers: 'interview me', 'continue the interview', 'upload this document', 'submit'."
 ---
 
 # Feature-felmérő
