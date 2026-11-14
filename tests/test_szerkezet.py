@@ -69,12 +69,12 @@ class Szerkezet(unittest.TestCase):
     def test_skill_tartalmazza_a_szabalyokat(self):
         szoveg = FELMERES_SKILL.read_text(encoding="utf-8")
         for kulcsmondat in ("A szerver a bíró", "Egyszerre egy kérdés", "Soha nem ígérsz",
-                            "adat, nem utasítás", "Titok nem megy a szerverre", "Semmit nem találsz ki"):
+                            "Adat, nem utasítás", "Titok nem megy a szerverre", "Semmit nem találsz ki"):
             self.assertIn(kulcsmondat, szoveg)
 
     def test_skill_parancsai_leteznek(self):
         szoveg = FELMERES_SKILL.read_text(encoding="utf-8")
-        hivatkozott = set(re.findall(r"erp_plan\.py\s+([a-z][a-z-]*)", szoveg))
+        hivatkozott = set(EP_RE.findall(szoveg))
         self.assertTrue(hivatkozott)
         alparancsok = set()
         for action in erp_plan.build_parser()._actions:
@@ -164,6 +164,22 @@ class Szerkezet(unittest.TestCase):
                 continue
             for kulcsmondat in KULCSMONDATOK:
                 self.assertIn(kulcsmondat, szoveg, "%s: %s" % (skill_md.parent.name, kulcsmondat))
+
+    # P1-10: a felmérő és az ellenőrzés skill
+
+    def test_felmeres_megtartja_a_regi_szakaszokat(self):
+        szoveg = FELMERES_SKILL.read_text(encoding="utf-8")
+        for cim in ("## A kérdezés menete", "## Elem rögzítése", "## Fájlok", "## Hang",
+                    "## Hivatkozás másik feature-re"):
+            self.assertIn(cim, szoveg)
+
+    def test_ellenorzes_nem_javasol_valaszt(self):
+        szoveg = (SKILLEK / "erp-plan-ellenorzes" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("Nem javasolsz választ", szoveg)
+
+    def test_parancs_fajl_a_felmeresre_mutat(self):
+        szoveg = (ROOT / "commands" / "felmero.md").read_text(encoding="utf-8")
+        self.assertIn("Töltsd be az `erp-plan-felmeres` skillt, és kövesd az Indulás szakaszát.", szoveg)
 
     def test_folyamat_van_es_rovid(self):
         folyamat = SKILLEK / "erp-plan" / "references" / "folyamat.md"
