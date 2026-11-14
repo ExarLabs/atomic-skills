@@ -1,6 +1,9 @@
 {
-  "name": "atomic-skills",
-  "version": "0.1.0",
-  "description": "Atomi ügyfél-oldali Claude Code skillek. Első skill: a feature-felmérő.",
-  "author": {"name": "ExarLabs"}
+  "name": "erp-plan",
+  "version": "0.2.0",
+  "description": "ERP Plan: munkák, felmérés és kapcsolódás az EXAR ERP-hez, a saját Claude Code-odból.",
+  "author": {"name": "ExarLabs"},
+  "homepage": "https://exarlabs.com/atomic-skills",
+  "repository": "https://github.com/ExarLabs/atomic-skills",
+  "license": "MIT"
 }

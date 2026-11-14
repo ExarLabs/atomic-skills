@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""felmero.py: a feature-felmérő kliens-CLI (csak szabványos könyvtár, Python 3.9+).
+"""erp_plan.py: a feature-felmérő kliens-CLI (csak szabványos könyvtár, Python 3.9+).
 
 A CLI továbbít és érthetően jelent. A teljességet és az idézetek egyezését a
 PLAN.md 4.8 szerint maga számolja (ugyanazzal a normalizálással). A két
@@ -28,9 +28,9 @@ import urllib.parse
 import urllib.request
 import uuid
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 API_VERZIO = 1
-USER_AGENT = "atomic-skills-felmero/" + VERSION
+USER_AGENT = "atomic-skills-erp-plan/0.2.0"
 
 KILEP_SIKER, KILEP_HASZNALAT, KILEP_BEALLITAS, KILEP_MEGTAGADVA, KILEP_HALOZAT = 0, 2, 3, 4, 5
 
@@ -302,7 +302,7 @@ def json_be(torzs):
 # ---------------------------------------------------------------------------
 
 def config_utvonal():
-    return os.environ.get("FELMERO_CONFIG") or os.path.join(
+    return os.environ.get("ERP_PLAN_CONFIG") or os.environ.get("FELMERO_CONFIG") or os.path.join(
         os.path.expanduser("~"), ".config", "felmero", "config.json")
 
 
@@ -328,7 +328,7 @@ def config_betoltes(utvonal):
         with open(utvonal, encoding="utf-8") as f:
             return json.load(f)
     except ValueError:
-        raise FelmeroHiba("FELMERO_BEALLITAS", "A beállító fájl sérült. Futtasd újra: felmero.py beallit --url <cím>", KILEP_BEALLITAS)
+        raise FelmeroHiba("FELMERO_BEALLITAS", "A beállító fájl sérült. Futtasd újra: erp_plan.py beallit --url <cím>", KILEP_BEALLITAS)
 
 
 def kell_cfg():
@@ -339,7 +339,7 @@ def kell_cfg():
         if os.environ.get(env):
             cfg[kulcs] = os.environ[env]
     if not cfg.get("url"):
-        raise FelmeroHiba("FELMERO_NINCS_BEALLITAS", "Nincs beállítás. Futtasd: felmero.py beallit --url <cím>", KILEP_BEALLITAS)
+        raise FelmeroHiba("FELMERO_NINCS_BEALLITAS", "Nincs beállítás. Futtasd: erp_plan.py beallit --url <cím>", KILEP_BEALLITAS)
     if not url_ervenyes(cfg["url"]):
         raise FelmeroHiba("FELMERO_URL", "Az URL csak https lehet (kivétel: localhost).", KILEP_BEALLITAS)
     cfg.setdefault("adapter", "proto")
@@ -598,7 +598,7 @@ class Atomi:
 def adapter(cfg):
     if cfg["adapter"] == "proto":
         if not cfg.get("user") or not cfg.get("jelszo"):
-            raise FelmeroHiba("FELMERO_NINCS_BEALLITAS", "Hiányzik a felhasználó vagy a jelszó. Futtasd újra: felmero.py beallit --url <cím>", KILEP_BEALLITAS)
+            raise FelmeroHiba("FELMERO_NINCS_BEALLITAS", "Hiányzik a felhasználó vagy a jelszó. Futtasd újra: erp_plan.py beallit --url <cím>", KILEP_BEALLITAS)
         AKTIV_UTAK[0] = PROTO_UTAK
         return Proto(cfg)
     if cfg["adapter"] == "atomi":
@@ -1067,7 +1067,7 @@ KEZELOK = {
 
 
 def build_parser():
-    p = argparse.ArgumentParser(prog="felmero.py", description="Feature-felmérő kliens-CLI (Atomi).")
+    p = argparse.ArgumentParser(prog="erp_plan.py", description="Feature-felmérő kliens-CLI (Atomi).")
     p.add_argument("--szoveg", action="store_true", help="ember-olvasható rövid kimenet JSON helyett")
     sub = p.add_subparsers(dest="parancs", required=True, metavar="PARANCS")
 

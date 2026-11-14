@@ -1,11 +1,12 @@
 {
   "name": "atomic-skills",
+  "description": "Az ExarLabs ügyfél-oldali Claude Code skilljei. Első csomag: ERP Plan.",
   "owner": {"name": "ExarLabs"},
   "plugins": [
     {
-      "name": "atomic-skills",
+      "name": "erp-plan",
       "source": "./",
-      "description": "Atomi ügyfél-oldali Claude Code skillek. Első skill: a feature-felmérő."
+      "description": "ERP Plan: munkák, felmérés és kapcsolódás az EXAR ERP-hez."
     }
   ]
 }

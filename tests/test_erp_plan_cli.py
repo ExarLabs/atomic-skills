@@ -1,4 +1,4 @@
-"""Egységtesztek a felmero.py tiszta függvényeire (hálózat nélkül)."""
+"""Egységtesztek az erp_plan.py tiszta függvényeire (hálózat nélkül)."""
 import importlib.util
 import os
 import pathlib
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-CLI_UTVONAL = ROOT / "skills" / "feature-felmero" / "felmero.py"
+CLI_UTVONAL = ROOT / "skills" / "erp-plan" / "erp_plan.py"
 
 spec = importlib.util.spec_from_file_location("felmero", CLI_UTVONAL)
 felmero = importlib.util.module_from_spec(spec)
@@ -257,7 +257,7 @@ class Egyeb(unittest.TestCase):
     def test_csak_stdlib_import(self):
         import ast
         allowed = {"argparse", "datetime", "getpass", "http", "json", "mimetypes", "os", "re", "stat",
-                   "sys", "time", "unicodedata", "urllib", "uuid", "hashlib", "pathlib", "shutil"}
+                   "sys", "time", "unicodedata", "urllib", "uuid", "hashlib", "pathlib", "shutil", "platform", "secrets"}
         fa = ast.parse(CLI_UTVONAL.read_text(encoding="utf-8"))
         nevek = set()
         for csomo in ast.walk(fa):
@@ -266,6 +266,22 @@ class Egyeb(unittest.TestCase):
             elif isinstance(csomo, ast.ImportFrom) and csomo.module:
                 nevek.add(csomo.module.split(".")[0])
         self.assertTrue(nevek <= allowed, nevek - allowed)
+
+    def test_erp_plan_config_nyer_a_regi_valtozon(self):
+        regi = os.environ.get("FELMERO_CONFIG")
+        uj = os.environ.get("ERP_PLAN_CONFIG")
+        try:
+            os.environ["FELMERO_CONFIG"] = "/tmp/regi.json"
+            os.environ["ERP_PLAN_CONFIG"] = "/tmp/uj.json"
+            self.assertEqual(felmero.config_utvonal(), "/tmp/uj.json")
+            del os.environ["ERP_PLAN_CONFIG"]
+            self.assertEqual(felmero.config_utvonal(), "/tmp/regi.json")
+        finally:
+            for kulcs, ertek in (("FELMERO_CONFIG", regi), ("ERP_PLAN_CONFIG", uj)):
+                if ertek is None:
+                    os.environ.pop(kulcs, None)
+                else:
+                    os.environ[kulcs] = ertek
 
 
 if __name__ == "__main__":
