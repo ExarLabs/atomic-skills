@@ -74,7 +74,10 @@ class HamisSzerver:
         self._fajlok = {}
         self._szamlalo = {}
         self._ido = 0
-        self.http = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Kezelo)
+        self.szolgaltatas_el = False  # az atomi szolgaltatas-végpont él-e (eszközkódos mód)
+        self.kulcsok = {}  # api_key -> api_secret, az atomi whoami végponthoz
+        self.utolso_auth = None  # az utolsó whoami-kérés Authorization fejléce
+        self.http =http.server.ThreadingHTTPServer(("127.0.0.1", 0), Kezelo)
         self.http.daemon_threads = True
         self.http.szerver = self
         self.url = "http://127.0.0.1:%d" % self.http.server_address[1]
@@ -168,6 +171,21 @@ class HamisSzerver:
     # Kérések feldolgozása
 
     def feldolgoz(self, metodus, ut, q, torzs, fejlec):
+        # Bejelentkezés nélkül elérhető végpontok (a kapcsolódás-ellenőrzés használja).
+        if ut == "/api/method/ping":
+            return self._json(200, {"message": "pong"})
+        if ut == "/api/method/atomi.felmero.api.szolgaltatas":
+            if not self.szolgaltatas_el:
+                return self._json(404, {"exception": "DoesNotExistError", "message": "Nincs ilyen metódus."})
+            return self._json(200, {"message": {"api_verzio": 1, "eszkoz_kod": True}})
+        if ut == "/api/method/atomi.felmero.api.whoami":
+            self.utolso_auth = fejlec.get("Authorization")
+            kulcs, _, titok = (self.utolso_auth or "").partition(" ")[2].partition(":")
+            if not kulcs or self.kulcsok.get(kulcs) != titok:
+                return self._json(401, {"message": "Hibás kulcs."})
+            return self._json(200, {"message": {"felhasznalo": FELHASZNALO, "nev": "Próba Ügyfél",
+                                                "api_verzio": 1, "mod": "ugyfel", "irhat": True,
+                                                "szervezetek": [CEG]}})
         if ut == "/api/method/login":
             return self._belepes(torzs)
         if not fejlec.get("Cookie") or SID not in fejlec.get("Cookie"):

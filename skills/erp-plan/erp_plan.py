@@ -19,6 +19,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import stat
 import sys
 import time
@@ -80,7 +81,10 @@ NEV_RE = re.compile(r"^(FP|FT|FA)-[0-9A-Za-z.]{1,20}$")
 HIBAKOD_RE = re.compile(r"\[(FELMERO_[A-Z_]+)\]")
 
 PROTO_UTAK = ("/api/resource/", "/api/method/login", "/api/method/logout", "/api/method/upload_file",
-              "/api/method/frappe.sessions.get_csrf_token", "/private/files/", "/files/")
+              "/api/method/frappe.sessions.get_csrf_token", "/private/files/", "/files/",
+              "/api/method/ping", "/api/method/atomi.felmero.api.szolgaltatas")
+ATOMI_UTAK = ("/api/method/atomi.felmero.api.", "/api/method/ping")
+ALAP_URL = "https://atomic.exarlabs.com"
 ALAP_HIBAKOD = {401: "FELMERO_BEJELENTKEZES", 403: "FELMERO_TILTOTT", 404: "FELMERO_NEM_TALALHATO",
                 429: "FELMERO_NAPI_KORLAT"}
 
@@ -1149,11 +1153,12 @@ class Kliens:
         self.csrf = None
         self.titkok = []
 
-    def keres(self, metodus, ut, adat=None, nyers=None, tipus=None):
+    def keres(self, metodus, ut, adat=None, nyers=None, tipus=None, fejlec=None):
         ut_resz = ut.split("?", 1)[0]
         if not any(ut_resz.startswith(p) for p in AKTIV_UTAK[0]):
             raise FelmeroHiba("FELMERO_BELSO", "Nem engedélyezett végpont.", KILEP_HASZNALAT)
         fej = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+        fej.update(fejlec or {})
         torzs = None
         if nyers is not None:
             torzs = nyers
@@ -1346,6 +1351,20 @@ class Atomi:
     def __init__(self, cfg):
         self.cfg = cfg
 
+    def whoami(self):
+        """Az eszközkulccsal: a szerver mondja meg, ki vagy és mit érsz el. A kulcs a fejlécben megy, nem a kimenetben."""
+        key, secret = self.cfg.get("api_key") or "", self.cfg.get("api_secret") or ""
+        if not key or not secret:
+            raise FelmeroHiba("FELMERO_BEJELENTKEZES", "Nincs eszközkulcs a beállításban.", KILEP_BEALLITAS)
+        k = Kliens(self.cfg["url"])
+        k.titkok = [key, secret]
+        torzs = k.keres("GET", "/api/method/atomi.felmero.api.whoami",
+                        fejlec={"Authorization": "token %s:%s" % (key, secret)})
+        adat = json_be(torzs).get("message")
+        if not isinstance(adat, dict):
+            raise FelmeroHiba("FELMERO_VALASZ", "Érvénytelen válasz a szervertől.", KILEP_HALOZAT)
+        return dict(adat, adapter="atomi")
+
     def __getattr__(self, nev):
         if nev.startswith("__"):
             raise AttributeError(nev)
@@ -1363,7 +1382,7 @@ def adapter(cfg):
         AKTIV_UTAK[0] = PROTO_UTAK
         return Proto(cfg)
     if cfg["adapter"] == "atomi":
-        AKTIV_UTAK[0] = ("/api/method/atomi.felmero.api.",)
+        AKTIV_UTAK[0] = ATOMI_UTAK
         return Atomi(cfg)
     raise FelmeroHiba("FELMERO_ADAPTER", "Ismeretlen adapter: " + str(cfg["adapter"]), KILEP_BEALLITAS)
 
@@ -2044,6 +2063,139 @@ def cmd_context_vazlat(p, a):
     return {"ki": a.ki, "sorok": szoveg.count("\n"), "nyitott_db": nyitott_db(szoveg), "fajl": fajl}
 
 
+def teendo_valaszt(van_cfg, adapter_nev, alap_url, rend, mod):
+    """A kapcsolódás teendője (4.5 táblája). rend: lépéskód -> rendben; mod: eles, proba vagy None."""
+    if not van_cfg:
+        if alap_url:
+            return "KULCS_IGENYLES" if mod == "eles" else "HOZZAFERES_KERES"
+        if not rend.get("URL"):
+            return "BEALLIT"
+        if not rend.get("HALOZAT"):
+            return "HALOZAT_VARJ"
+        return "KULCS_IGENYLES" if mod == "eles" else "BEALLIT"
+    if not rend.get("URL"):
+        return "BEALLIT"
+    if not rend.get("HALOZAT"):
+        return "HALOZAT_VARJ"
+    if not rend.get("BELEPES"):
+        return "KULCS_IGENYLES" if adapter_nev == "atomi" else "BEALLIT"
+    if not rend.get("SZERVEZET"):
+        return "HOZZAFERES_KERES"
+    if not rend.get("IRHAT"):
+        return "CSAK_OLVASAS"
+    if not rend.get("API_VERZIO"):
+        return "FRISSITS"
+    return "NINCS"
+
+
+def kimeno_darab():
+    mappa = kimeno_mappa()
+    if not os.path.isdir(mappa):
+        return 0
+    return sum(len(kimeno_olvas(nev[:-len(".jsonl")])) for nev in os.listdir(mappa) if nev.endswith(".jsonl"))
+
+
+def kapcsolat_adat(cfg, url, alap_url):
+    """A kapcsolódás lépései (4.5). A függő lépés kihagyva, ha az előfeltétele hamis.
+    A HALOZAT és a SZOLGALTATAS konfig nélkül is fut: a teendő-ágak ezt kérik."""
+    lepesek, rend = [], {}
+    mod, who = None, None
+    adapter_nev = (cfg or {}).get("adapter", "proto") if cfg else None
+
+    def rogzit(kod, ok, reszlet="", kihagyva=False):
+        rend[kod] = bool(ok) and not kihagyva
+        sor = {"kod": kod, "rendben": rend[kod], "reszlet": reszlet}
+        if kihagyva:
+            sor["kihagyva"] = True
+        lepesek.append(sor)
+
+    rogzit("BEALLITAS", bool(cfg), "van beállítás" if cfg else "nincs beállító fájl, vagy nem olvasható")
+    if url is None:
+        rogzit("URL", False, "nincs cím a beállításban")
+    else:
+        rogzit("URL", url_ervenyes(url), "rendben" if url_ervenyes(url) else "csak https, vagy localhost")
+    if not rend["URL"]:
+        rogzit("HALOZAT", False, "kihagyva", kihagyva=True)
+    else:
+        try:
+            valasz = json_be(Kliens(url, idotullepes=10).keres("GET", "/api/method/ping"))
+            rogzit("HALOZAT", isinstance(valasz, dict) and valasz.get("message") == "pong", "ping")
+        except FelmeroHiba as h:
+            rogzit("HALOZAT", False, h.kod)
+    if not rend["HALOZAT"]:
+        rogzit("SZOLGALTATAS", False, "kihagyva", kihagyva=True)
+    else:
+        try:
+            valasz = json_be(Kliens(url).keres("GET", "/api/method/atomi.felmero.api.szolgaltatas"))
+            if isinstance(valasz, dict) and isinstance(valasz.get("message"), dict):
+                mod = "eles"
+                rogzit("SZOLGALTATAS", True, "az eszközkódos út él")
+            else:
+                mod = "proba"
+                rogzit("SZOLGALTATAS", True, "nincs eszközkódos végpont (a próba-mód ez, nem akadály)")
+        except FelmeroHiba as h:
+            if h.http_kod is None:
+                rogzit("SZOLGALTATAS", False, h.kod)
+            else:
+                mod = "proba"
+                rogzit("SZOLGALTATAS", True, "nincs eszközkódos végpont (a próba-mód ez, nem akadály)")
+    if not cfg or not rend["URL"] or not rend["HALOZAT"]:
+        rogzit("BELEPES", False, "kihagyva", kihagyva=True)
+    else:
+        try:
+            p = adapter(dict(cfg, url=url, adapter=cfg.get("adapter", "proto")))
+            who = p.whoami()
+            rogzit("BELEPES", True, "belépés rendben")
+        except FelmeroHiba as h:
+            rogzit("BELEPES", False, h.kod)
+    if who is None:
+        for kod in ("SZERVEZET", "IRHAT", "API_VERZIO"):
+            rogzit(kod, False, "kihagyva", kihagyva=True)
+    else:
+        rogzit("SZERVEZET", bool(who.get("szervezetek")), "legalább egy cég")
+        rogzit("IRHAT", bool(who.get("irhat")), "írhat" if who.get("irhat") else "csak olvashat")
+        rogzit("API_VERZIO", who.get("api_verzio") == API_VERZIO, "a szerver API-verziója egyezik")
+    rogzit("KIMENO", True, "%d üzenet vár feltöltésre" % kimeno_darab())
+    elso = next((s["kod"] for s in lepesek if not s["rendben"] and not s.get("kihagyva")), None)
+    return {"adapter": adapter_nev, "mod": mod, "lepesek": lepesek, "elso_akadaly": elso, "rend": rend}
+
+
+def cmd_kapcsolat(a):
+    utvonal = config_utvonal()
+    cfg = None
+    if os.path.exists(utvonal):
+        try:
+            cfg = config_betoltes(utvonal) or None
+        except FelmeroHiba:
+            cfg = None
+    alap_url = a.url is None and cfg is None
+    url = a.url or (cfg or {}).get("url") or (ALAP_URL if alap_url else None)
+    adat = kapcsolat_adat(cfg, url, alap_url)
+    teendo = teendo_valaszt(bool(cfg), adat["adapter"], alap_url, adat["rend"], adat["mod"])
+    kimenet = {"url": url, "adapter": adat["adapter"], "mod": adat["mod"], "lepesek": adat["lepesek"],
+               "elso_akadaly": adat["elso_akadaly"], "teendo": teendo}
+    if teendo != "NINCS":
+        kimenet["_kilepes"] = KILEP_TALALAT
+    return kimenet
+
+
+def cmd_paros_allapot(a):
+    """A PAROS Advisor telepítése a gépen. Hálózat nélkül, mindig 0-val lép ki."""
+    mappa = os.path.expanduser("~/.paros-advisor")
+    verzio_fajl = os.path.join(mappa, "VERSION")
+    telepitve = os.path.isfile(verzio_fajl)
+    verzio = None
+    if telepitve:
+        try:
+            with open(verzio_fajl, encoding="utf-8") as f:
+                verzio = f.read().strip() or None
+        except OSError:
+            verzio = None
+    return {"telepitve": telepitve, "mappa": "~/.paros-advisor", "verzio": verzio,
+            "parancs": os.path.isfile(os.path.expanduser(os.path.join("~", ".claude", "commands", "paros.md"))),
+            "git": shutil.which("git") is not None}
+
+
 KEZELOK = {
     "kivagyok": cmd_kivagyok, "hozzaferes": cmd_hozzaferes, "projektek": cmd_projektek, "projekt": cmd_projekt,
     "uj-projekt": cmd_uj_projekt, "projekt-frissit": cmd_projekt_frissit, "archival": cmd_archival,
@@ -2197,6 +2349,11 @@ def build_parser():
                    help="figyelem súlyú találat elfogadása (többször is adható)")
     x.add_argument("--mind", action="store_true", help="az elfogadott találatokat is mutatja")
 
+    x = sub.add_parser("kapcsolat", help="kapcsolódás-ellenőrzés: a lépések és a teendő (6: van teendő)")
+    x.add_argument("--url", help="a szerver címe, ha még nincs beállítás")
+
+    sub.add_parser("paros-allapot", help="a PAROS Advisor telepítésének állapota (hálózat nélkül)")
+
     x = sub.add_parser("frappe-kerdesek", help="a 12 Frappe-téma kérdései (FT-vel: a feature állapota)")
     x.add_argument("feature", nargs="?", type=nev_tipus("FT"))
 
@@ -2238,6 +2395,10 @@ def futtat(a):
         return cmd_beallit(a)
     if a.parancs == "kovetkezo":
         return kovetkezo_cli(a)
+    if a.parancs == "kapcsolat":
+        return cmd_kapcsolat(a)
+    if a.parancs == "paros-allapot":
+        return cmd_paros_allapot(a)
     p = adapter(kell_cfg())
     return KEZELOK[a.parancs](p, a)
 
