@@ -136,5 +136,48 @@ class Parancsok(CliTeszt):
             self.assertEqual(f.read(), "# Jegyzet\n\nHavonta fut a folyamat.\n")
 
 
+class LezartMunka(CliTeszt):
+    """P1-K: lezárt munkán a kliens-üzenet ne ragadjon a kimenő sorban."""
+
+    def lezar(self):
+        self.szerver.rekord("Felmero Feature", "FT-00001")["allapot"] = "Elfogadva"
+
+    def test_lezart_kliens_uzenet_erthető_hibat_ad_es_kiurul(self):
+        self.lezar()
+        valasz = self.fajl("valasz.txt", "Ezt már nem tudom elküldeni.")
+        elotte = len(self.szerver.rekordok("Felmero Uzenet"))
+        eredmeny = self.ep("uzenet", "FT-00001", "--szerep", "kliens", "--fajl", valasz)
+        self.assertEqual(eredmeny.returncode, KILEP_MEGTAGADVA, eredmeny.stdout + eredmeny.stderr)
+        self.assertEqual(self.hiba_kod(eredmeny), "FELMERO_ALLAPOT")
+        uzenet = json.loads(eredmeny.stdout)["hiba"]["uzenet"]
+        self.assertIn("lezárult", uzenet)
+        self.assertNotIn("%s", uzenet)
+        self.assertEqual(self.kimeno_sorai(), [])
+        self.assertEqual(len(self.szerver.rekordok("Felmero Uzenet")), elotte)
+
+    def test_lezart_kimeno_nem_ragad_be(self):
+        self.lezar()
+        valasz = self.fajl("valasz.txt", "Ezt már nem tudom elküldeni.")
+        self.szerver.hiba("POST", "/api/resource/Felmero Uzenet", "store_drop")
+        self.ep("uzenet", "FT-00001", "--szerep", "kliens", "--fajl", valasz)
+        self.szerver.hiba_torol()
+        self.assertEqual(self.kimeno_sorai(), [])
+        ujra = self.ep("kimeno", "FT-00001")
+        self.assertEqual(ujra.returncode, 0, ujra.stdout + ujra.stderr)
+        self.assertEqual(json.loads(ujra.stdout)["kuldott"], [])
+
+    def test_lezart_par_kliens_resze_kiurul(self):
+        self.lezar()
+        kerdes = self.fajl("kerdes.txt", "Mit csinálsz most?")
+        valasz = self.fajl("valasz.txt", "Havonta egyszer kézzel számolom újra a készletet.")
+        kliensek_elotte = len([r for r in self.szerver.rekordok("Felmero Uzenet") if r.get("szerep") == "kliens"])
+        eredmeny = self.ep("par", "FT-00001", "--kerdes-fajl", kerdes, "--valasz-fajl", valasz)
+        self.assertEqual(eredmeny.returncode, KILEP_MEGTAGADVA, eredmeny.stdout + eredmeny.stderr)
+        self.assertEqual(self.hiba_kod(eredmeny), "FELMERO_ALLAPOT")
+        self.assertEqual(self.kimeno_sorai(), [])
+        kliensek = [r for r in self.szerver.rekordok("Felmero Uzenet") if r.get("szerep") == "kliens"]
+        self.assertEqual(len(kliensek), kliensek_elotte)
+
+
 if __name__ == "__main__":
     unittest.main()

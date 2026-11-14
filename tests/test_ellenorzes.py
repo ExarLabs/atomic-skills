@@ -279,5 +279,87 @@ class CliEllenorzes(CliTeszt):
             self.assertEqual(json.load(f)["elfogadott"], [ujj])
 
 
+class P1K(unittest.TestCase):
+    """P1-K javítás: reszletek, INK-02 dátum-zaj, INK-04 negatív köz."""
+
+    def reszlet(self, talalatok, kod):
+        talalat = [t for t in talalatok if t["szabaly"] == kod]
+        self.assertTrue(talalat, kod)
+        return talalat[0]["reszletek"]
+
+    def test_reszletek_minden_szabalyban_kitoltott(self):
+        esetek = {
+            "INK-01": ko(elemek=[el("B1", "Kézi számolás.")], biz=[bz("B1", "nincs ilyen mondat", ervenyes=0)]),
+            "INK-02": ko(elemek=[el("B1", "Havonta 40 db hibát javítok.")], biz=[bz("B1", ALAP_UZENET)]),
+            "INK-03": ko(elemek=[el("C1", "Jövő hét.", datum="2027-01-11"), el("C2", "Január vége.", datum="2027-01-10")]),
+            "INK-04": ko(elemek=[el("C1", "Jövő hét.", datum="2027-01-10"), el("C2", "Március.", datum="2027-03-01")]),
+            "INK-05": ko(elemek=[el("C1", "Múlt hét.", datum="2026-11-01"), el("C2", "Január.", datum="2027-01-20")]),
+            "INK-06": ko(elemek=[el("D4", "Két hónap.", szam=45)]),
+            "INK-07": ko(uzenetek=[{"name": "U-1", "sorszam": 1, "szoveg": ALAP_UZENET},
+                                   {"name": "U-2", "sorszam": 2, "szoveg": "Még egy."}],
+                         osszefoglalo={"verzio": 1, "uzenet_sorszamig": 1}),
+            "INK-08": ko(hivatkozasok=[{"cel": "FT-00002", "cel_cim": "Régi munka", "allapot": "Lezárva"}]),
+            "INK-09": ko(elemek=[el("B1", "Havonta 40 db hibát javítok."), el("D2", "Ma 60 db van.")]),
+            "INK-10": ko(elemek=[el("B3", "Kézi számolás minden nap, havonta"),
+                                 el("B2", "Ez a folyamat: kézi számolás minden nap, havonta, ami sok.")]),
+            "INK-11": ko(elemek=[el("D1", "Gyors és könnyű legyen.")]),
+            "INK-12": ko(elemek=[el("D2", "Most kézzel csináljuk.")]),
+            "INK-13": ko(elemek=[el("D3", "Kevesebb hiba legyen.")]),
+            "INK-14": ko(elemek=[el("B1", "x"), el("B2", "y"), el("UZ", "z")],
+                         biz=[bz("B1", ALAP_UZENET), bz("B2", ALAP_UZENET), bz("UZ", ALAP_UZENET)]),
+            "INK-15": ko(cim="Riport készítés"),
+            "INK-16": ko(elemek=[el("B3", "Kézi számolás minden nap, havonta")]),
+            "INK-17": ko(frappe_idezetek=[{"tema": "FR-ADAT", "cim": "Nyilvántartott adatok",
+                                           "idezet": "Ez a mondat nincs meg sehol."}]),
+            "INK-18": ko(),
+            "INK-19": ko(tarolt_szazalek=50),
+        }
+        tv = {"INK-15": [{"name": "FT-00009", "cim": "riport  KÉSZÍTÉS", "allapot": "Vázlat", "elemek": []}],
+              "INK-16": [{"name": "FT-00009", "cim": "x", "allapot": "Vázlat",
+                          "elemek": [el("B2", "Ez a folyamat: kézi számolás minden nap, havonta, ami sok.")]}]}
+        kimeno = {"INK-18": 2}
+        for kod, k in esetek.items():
+            with self.subTest(szabaly=kod):
+                talalatok = erp_plan.ellenoriz(k, tv.get(kod, []), kimeno.get(kod, 0), MA)
+                reszlet = self.reszlet(talalatok, kod)
+                self.assertIsInstance(reszlet, dict)
+                self.assertTrue(reszlet, "reszletek üres: %s" % kod)
+
+    def test_reszletek_tartalmazza_a_ket_allitast(self):
+        k = ko(elemek=[el("C1", "Jövő hét.", datum="2027-01-11"), el("C2", "Január vége.", datum="2027-01-10")])
+        reszlet = self.reszlet(fut(k), "INK-03")
+        self.assertEqual((reszlet["c1"], reszlet["c2"]), ("2027-01-11", "2027-01-10"))
+
+    def test_ink02_datum_nem_ad_zajt(self):
+        k = ko(elemek=[el("C1", "2027. január 11.")],
+               biz=[bz("C1", "Január 11-ig kész legyen.")],
+               uzenetek=[{"name": "U-1", "sorszam": 1, "szoveg": "Január 11-ig kész legyen."}])
+        self.assertNotIn("INK-02", szabalyok(fut(k)))
+
+    def test_ink02_datum_evszam_iso_alak_sem_ad_zajt(self):
+        k = ko(elemek=[el("C2", "2027-01-11 körül")],
+               biz=[bz("C2", "Január 11-ig kész legyen.")],
+               uzenetek=[{"name": "U-1", "sorszam": 1, "szoveg": "Január 11-ig kész legyen."}])
+        self.assertNotIn("INK-02", szabalyok(fut(k)))
+
+    def test_ink02_valodi_szam_meg_jelzi(self):
+        k = ko(elemek=[el("C1", "2027. január 11. és 40 db hiba")],
+               biz=[bz("C1", "Január 11-ig kész legyen.")],
+               uzenetek=[{"name": "U-1", "sorszam": 1, "szoveg": "Január 11-ig kész legyen."}])
+        self.assertIn("INK-02", szabalyok(fut(k)))
+
+    def test_ink04_negativ_koz_erthato_kerdes(self):
+        k = ko(elemek=[el("C1", "Jövő hét.", datum="2027-01-11"), el("C2", "Január.", datum="2027-01-04")])
+        talalatok = fut(k)
+        ink04 = [t for t in talalatok if t["szabaly"] == "INK-04"]
+        self.assertEqual(len(ink04), 1)
+        kerdes = ink04[0]["kerdes"]
+        self.assertNotIn("-7", kerdes)
+        self.assertNotIn(" -", kerdes)
+        self.assertIn("2027-01-04", kerdes)
+        self.assertIn("2027-01-11", kerdes)
+        self.assertIn("előtt", kerdes)
+
+
 if __name__ == "__main__":
     unittest.main()

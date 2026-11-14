@@ -28,8 +28,6 @@ A parancssori program: `skills/erp-plan/erp_plan.py` (a régi `felmero.py` alias
 
 Két út van: plugin (`/plugin marketplace add ExarLabs/atomic-skills`, majd `/plugin install erp-plan@atomic-skills`), vagy kézi másolás (`python3 scripts/telepit.py`, a skillek a `~/.claude/skills/` alá kerülnek). Részletek: [docs/telepites.md](docs/telepites.md).
 
-Helyi kipróbálás push nélkül, egy kliens nevében: [docs/kiprobalas.md](docs/kiprobalas.md).
-
 ## Fejlesztés
 
 ```

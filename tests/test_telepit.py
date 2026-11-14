@@ -90,12 +90,6 @@ class Telepito(unittest.TestCase):
         self.assertIn("scripts/telepit.py", telepites)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("scripts/telepit.py", readme)
-        self.assertIn("docs/kiprobalas.md", readme)
-
-    def test_kiprobalas_van_es_a_konfig_valtozo(self):
-        kiprobalas = (ROOT / "docs" / "kiprobalas.md").read_text(encoding="utf-8")
-        self.assertIn("ERP_PLAN_CONFIG", kiprobalas)
-        self.assertIn("claude --plugin-dir", kiprobalas)
 
 
 if __name__ == "__main__":

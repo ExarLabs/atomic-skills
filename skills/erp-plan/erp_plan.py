@@ -316,11 +316,19 @@ def _biz(k, kod, csak_ervenyes=False):
     return [b for b in k["bizonyitekok"] if b.get("elem") == kod and (b.get("ervenyes") or not csak_ervenyes)]
 
 
-def _talalat(kod, suly, elemek, ertekek, leiras, kerdes):
+HONAP_RE = r"(?:január|február|március|április|május|június|július|augusztus|szeptember|október|november|december)"
+DATUM_RE = re.compile(
+    r"\d{4}\s*[.\-/]\s*(?:1[0-2]|0?[1-9])\s*[.\-/]\s*(?:3[01]|[12]\d|0?[1-9])\.?"
+    r"|\d{4}\.?\s*" + HONAP_RE + r"\w*\.?(?:\s*\d{1,2}\.?)?"
+    r"|\d{1,2}\.?\s*" + HONAP_RE + r"\w*\.?(?:\s*\d{4}\.?)?"
+    r"|" + HONAP_RE + r"\w*\.?\s*\d{1,2}\.?", re.IGNORECASE)
+
+
+def _talalat(kod, suly, elemek, ertekek, leiras, kerdes, reszletek):
     szoveg = "|".join("" if v is None else normal(str(v)) for v in ertekek)
     ujj = hashlib.sha1((kod + "|" + szoveg).encode("utf-8")).hexdigest()[:10]
     return {"szabaly": kod, "suly": suly, "elemek": elemek, "leiras": leiras, "kerdes": kerdes,
-            "ujjlenyomat": ujj, "reszletek": {}}
+            "ujjlenyomat": ujj, "reszletek": reszletek}
 
 
 def _ink01(k, tv, kd, ma):
@@ -335,7 +343,8 @@ def _ink01(k, tv, kd, ma):
                                    "Az idézet nincs meg szó szerint a kliens-üzenetben.",
                                    "Ezt rögzítettük a(z) %s pontnál: «%s». A hozzá tartozó mondatot («%s») "
                                    "nem találom az üzeneteid között. Elmondanád újra a saját szavaiddal?"
-                                   % (CIMEK[kod], normal(e.get("ertek")), normal(b.get("idezet")))))
+                                   % (CIMEK[kod], normal(e.get("ertek")), normal(b.get("idezet"))),
+                                   {"elem": kod, "ertek": normal(e.get("ertek")), "idezet": normal(b.get("idezet"))}))
     return ki
 
 
@@ -352,13 +361,16 @@ def _ink02(k, tv, kd, ma):
         van = set()
         for u in uzenetek:
             van |= szamok(u.get("szoveg"))
+        # A dátumok (2027-01-11, 2027. január 11.) nem számok a tartalomban: évszámuk nem zaj.
         hianyzo = next((s for resz in (e.get("ertek"), e.get("kiegeszites"))
-                        for s in SZAM_RE.findall(resz or "") if szam_kanon(s) not in van), None)
+                        for s in SZAM_RE.findall(DATUM_RE.sub(" ", resz or "")) if szam_kanon(s) not in van), None)
         if hianyzo:
             ki.append(_talalat("INK-02", "figyelem", [kod], [e.get("ertek"), e.get("kiegeszites")],
                                "Az elemben szereplő szám nincs az idézett üzenetben.",
                                "A(z) %s pontnál ez a szám áll: %s. Az üzenetedben nem találom. Honnan való, és pontos?"
-                               % (CIMEK[kod], hianyzo)))
+                               % (CIMEK[kod], hianyzo),
+                               {"elem": kod, "szam": hianyzo, "ertek": e.get("ertek") or "",
+                                "kiegeszites": e.get("kiegeszites") or ""}))
     return ki
 
 
@@ -371,7 +383,8 @@ def _ink03(k, tv, kd, ma):
         return [_talalat("INK-03", "hiba", ["C1", "C2"], [c1.get("datum"), c2.get("datum")],
                          "A határidő a kezdés előtt van.",
                          "Kezdésnek %s, határidőnek %s van felírva: a határidő a kezdés előtt van. Melyik a helyes?"
-                         % (c1.get("datum"), c2.get("datum")))]
+                         % (c1.get("datum"), c2.get("datum")),
+                         {"c1": c1.get("datum"), "c2": c2.get("datum")})]
     return []
 
 
@@ -382,11 +395,19 @@ def _ink04(k, tv, kd, ma):
     d1, d2 = _datum(c1.get("datum")), _datum(c2.get("datum"))
     if d1 and d2:
         nap = (d2 - d1).days
+        if nap < 0:
+            # A fordított sorrendet az INK-03 már jelzi; itt a kérdés a két dátum tisztázását kéri, negatív nap nélkül.
+            return [_talalat("INK-04", "figyelem", ["C1", "C2"], [c1.get("datum"), c2.get("datum")],
+                             "A határidő a kezdés előtt van, így a köztük lévő idő nincs értelmezve.",
+                             "A határidő (%s) a kezdés (%s) előtt van, így a köztük lévő időt nem tudom számolni. "
+                             "Mikor legyen a kezdés, és mikor a határidő?" % (c2.get("datum"), c1.get("datum")),
+                             {"c1": c1.get("datum"), "c2": c2.get("datum"), "nap": nap})]
         if nap > 28 or nap < 7:
             return [_talalat("INK-04", "figyelem", ["C1", "C2"], [c1.get("datum"), c2.get("datum")],
                              "A kezdés és a határidő között szokatlan a távolság.",
                              "A kezdés (%s) és a határidő (%s) között %d nap van. Így gondoltad?"
-                             % (c1.get("datum"), c2.get("datum"), nap))]
+                             % (c1.get("datum"), c2.get("datum"), nap),
+                             {"c1": c1.get("datum"), "c2": c2.get("datum"), "nap": nap})]
     return []
 
 
@@ -396,7 +417,8 @@ def _ink05(k, tv, kd, ma):
     if d1 and d1 < ma and k.get("allapot") in ("Vázlat", "Interjú", "Visszaküldve"):
         return [_talalat("INK-05", "figyelem", ["C1"], [c1.get("datum")],
                          "A felírt kezdés napja már elmúlt.",
-                         "A kezdésnek felírt nap (%s) már elmúlt. Mi legyen az új kezdés?" % c1.get("datum"))]
+                         "A kezdésnek felírt nap (%s) már elmúlt. Mi legyen az új kezdés?" % c1.get("datum"),
+                         {"c1": c1.get("datum"), "allapot": k.get("allapot")})]
     return []
 
 
@@ -405,7 +427,8 @@ def _ink06(k, tv, kd, ma):
     if d4 and _egesz(d4.get("szam")) not in MERESI_NAPOK:
         return [_talalat("INK-06", "hiba", ["D4"], [d4.get("ertek"), d4.get("szam")],
                          "A mérési időszak nem 30, 60 vagy 90 nap.",
-                         "A mérési időszak 30, 60 vagy 90 nap lehet. Melyiket választod?")]
+                         "A mérési időszak 30, 60 vagy 90 nap lehet. Melyiket választod?",
+                         {"elem": "D4", "ertek": d4.get("ertek"), "szam": d4.get("szam")})]
     return []
 
 
@@ -418,7 +441,9 @@ def _ink07(k, tv, kd, ma):
             return [_talalat("INK-07", "figyelem", [], [osz["verzio"], osz["uzenet_sorszamig"], utolso],
                              "Új üzenetek érkeztek az utolsó összefoglaló óta.",
                              "Az utolsó összefoglaló (%s. verzió) óta %d új üzeneted van. Frissítsem az összefoglalót?"
-                             % (osz["verzio"], db))]
+                             % (osz["verzio"], db),
+                             {"verzio": osz["verzio"], "uzenet_sorszamig": osz["uzenet_sorszamig"],
+                              "utolso_sorszam": utolso, "uj_uzenet_db": db})]
     return []
 
 
@@ -429,7 +454,8 @@ def _ink08(k, tv, kd, ma):
             ki.append(_talalat("INK-08", "figyelem", [], [hv["cel"], hv.get("allapot")],
                                "A hivatkozott munka lezárult, vagy nem érhető el.",
                                "Ez a munka a(z) «%s» munkára hivatkozik, amely lezárult. Marad a hivatkozás, "
-                               "vagy már nem érvényes?" % (hv.get("cel_cim") or hv["cel"])))
+                               "vagy már nem érvényes?" % (hv.get("cel_cim") or hv["cel"]),
+                               {"cel": hv["cel"], "cel_cim": hv.get("cel_cim"), "allapot": hv.get("allapot")}))
     return ki
 
 
@@ -453,7 +479,9 @@ def _ink09(k, tv, kd, ma):
                 ki.append(_talalat("INK-09", "figyelem", [a, b], [ea.get("ertek"), eb.get("ertek")],
                                    "Két pontban eltérő szám ugyanarra az egységre.",
                                    "A(z) %s pontnál %s %s, a(z) %s pontnál %s %s szerepel. Ugyanarról van szó? "
-                                   "Melyik a pontos?" % (CIMEK[a], szam_a, egyseg, CIMEK[b], szam_b, egyseg)))
+                                   "Melyik a pontos?" % (CIMEK[a], szam_a, egyseg, CIMEK[b], szam_b, egyseg),
+                                   {"elem_a": a, "ertek_a": ea.get("ertek"), "elem_b": b, "ertek_b": eb.get("ertek"),
+                                    "egyseg": egyseg, "szam_a": szam_a, "szam_b": szam_b}))
                 break
     return ki
 
@@ -472,7 +500,9 @@ def _ink10(k, tv, kd, ma):
                                    [tetel, e.get("ertek")] + [c.get("ertek") for c in cel],
                                    "Kizárt tétel szerepel a megoldás leírásában.",
                                    "Ezt kizártad: «%s», de a megoldás leírásában is szerepel. Benne van, vagy nincs?"
-                                   % tetel))
+                                   % tetel,
+                                   {"tetel": tetel, "elem": kod, "ertek": e.get("ertek"),
+                                    "megoldas": {c["kod"]: c.get("ertek") for c in cel}}))
     return ki
 
 
@@ -491,7 +521,8 @@ def _ink11(k, tv, kd, ma):
             ki.append(_talalat("INK-11", "figyelem", ["D1"], [sor],
                                "Az elfogadási feltétel nehezen ellenőrizhető.",
                                "Ez az elfogadási feltétel nehezen ellenőrizhető: «%s». Miből látod majd átvételkor, "
-                               "igen vagy nem, konkrét adaton?" % sor))
+                               "igen vagy nem, konkrét adaton?" % sor,
+                               {"elem": "D1", "sor": sor}))
     return ki
 
 
@@ -500,7 +531,8 @@ def _ink12(k, tv, kd, ma):
     if e and not SZAM_RE.search((e.get("ertek") or "") + " " + (e.get("kiegeszites") or "")):
         return [_talalat("INK-12", "figyelem", ["D2"], [e.get("ertek"), e.get("kiegeszites")],
                          "A kiinduló állapotban nincs szám.",
-                         "A kiinduló állapotnál nincs szám. Mennyi ma, és honnan tudod?")]
+                         "A kiinduló állapotnál nincs szám. Mennyi ma, és honnan tudod?",
+                         {"elem": "D2", "ertek": e.get("ertek") or "", "kiegeszites": e.get("kiegeszites") or ""})]
     return []
 
 
@@ -509,7 +541,8 @@ def _ink13(k, tv, kd, ma):
     if e and not SZAM_RE.search(e.get("ertek") or ""):
         return [_talalat("INK-13", "figyelem", ["D3"], [e.get("ertek")],
                          "A sikerkritériumban nincs szám.",
-                         "A sikerkritériumnál nincs szám. Mihez képest, mennyit vársz?")]
+                         "A sikerkritériumnál nincs szám. Mihez képest, mennyit vársz?",
+                         {"elem": "D3", "ertek": e.get("ertek") or ""})]
     return []
 
 
@@ -526,7 +559,9 @@ def _ink14(k, tv, kd, ma):
                                [idezet] + [(_ert(k, kod) or {}).get("ertek") for kod in rendezett],
                                "Ugyanaz a mondat több pontot is alátámaszt.",
                                "Ugyanaz a mondatod támaszt alá %d pontot: %s. Mondanál mindegyikről külön is valamit?"
-                               % (len(rendezett), ", ".join(rendezett))))
+                               % (len(rendezett), ", ".join(rendezett)),
+                               {"idezet": idezet, "elemek": rendezett, "db": len(rendezett),
+                                "ertekek": {kod: (_ert(k, kod) or {}).get("ertek") for kod in rendezett}}))
     return ki
 
 
@@ -537,7 +572,8 @@ def _ink15(k, tv, kd, ma):
     return [_talalat("INK-15", "figyelem", [], [cim, t["name"]],
                      "Ugyanezzel a címmel másik nyitott munka van.",
                      "Ugyanezzel a címmel van egy másik nyitott munkád (%s). Kettő kell, vagy az egyiket "
-                     "visszavonod?" % t["name"])
+                     "visszavonod?" % t["name"],
+                     {"cim": k.get("cim"), "masik": t["name"], "masik_allapot": t.get("allapot")})
             for t in tv if t.get("allapot") in NYITOTT_ALLAPOTOK and normal(t.get("cim")).casefold() == cim]
 
 
@@ -559,7 +595,9 @@ def _ink16(k, tv, kd, ma):
                     ki.append(_talalat("INK-16", "figyelem", [kod], [tetel, t["name"], b2.get("ertek"), e.get("ertek")],
                                        "Kizárt tétel más nyitott munkában szerepel kérésként.",
                                        "Amit itt kizársz («%s»), azt a(z) %s munkában kéred. Szándékos a szétválasztás?"
-                                       % (tetel, t["name"])))
+                                       % (tetel, t["name"]),
+                                       {"tetel": tetel, "elem": kod, "ertek": e.get("ertek"), "masik": t["name"],
+                                        "masik_b2": b2.get("ertek")}))
     return ki
 
 
@@ -571,14 +609,16 @@ def _ink17(k, tv, kd, ma):
                                "A Frappe-lap idézete nincs meg a kliens szavai között.",
                                "Ezt rögzítettük a(z) %s pontnál: «%s». A hozzá tartozó mondatot nem találom az "
                                "üzeneteid között. Elmondanád újra a saját szavaiddal?"
-                               % (fi.get("cim"), normal(fi.get("idezet")))))
+                               % (fi.get("cim"), normal(fi.get("idezet"))),
+                               {"tema": fi.get("tema"), "cim": fi.get("cim"), "idezet": normal(fi.get("idezet"))}))
     return ki
 
 
 def _ink18(k, tv, kd, ma):
     if kd > 0:
         return [_talalat("INK-18", "figyelem", [], [kd], "A helyi kimenő sor nincs feltöltve.",
-                         "%d üzeneted még nincs fent a szerveren. Feltöltsem most?" % kd)]
+                         "%d üzeneted még nincs fent a szerveren. Feltöltsem most?" % kd,
+                         {"db": kd})]
     return []
 
 
@@ -590,7 +630,8 @@ def _ink19(k, tv, kd, ma):
     if tarolt != szamolt:
         return [_talalat("INK-19", "figyelem", [], [tarolt, szamolt],
                          "A tárolt készültség eltér a számolttól.",
-                         "A tárolt készültség (%s%%) eltér a számolttól (%s%%). Újraszámolom." % (tarolt, szamolt))]
+                         "A tárolt készültség (%s%%) eltér a számolttól (%s%%). Újraszámolom." % (tarolt, szamolt),
+                         {"tarolt": tarolt, "szamolt": szamolt})]
     return []
 
 
@@ -1554,12 +1595,25 @@ def cmd_uzenetek(p, a):
     return p.uzenetek(a.feature, a.utan, a.limit)
 
 
+def lezart_uzenet_hiba(allapot):
+    """Érthető hiba arról, miért nem megy el a kliens-üzenet egy nem nyitott munkából."""
+    if allapot in ("Elfogadva", "Lezárva"):
+        return ("Ez a munka már lezárult (%s), ide nem küldhető új válasz. A válaszod nincs elmentve, "
+                "a helyi kimenő sorból kikerült." % allapot)
+    return ("A munka jelenlegi állapota (%s) nem engedi a válaszodat. A helyi kimenő sorból kikerült."
+            % (allapot or "ismeretlen"))
+
+
 def uzenet_kuld(p, f, tetelek):
-    """tetelek: [{"id", "szerep", "szoveg", "fajl"?}]. Előbb a kimenő sorba ír, siker után kiveszi."""
+    """tetelek: [{"id", "szerep", "szoveg", "fajl"?}]. Előbb a kimenő sorba ír, siker után kiveszi.
+    A kliens-üzenet lezárt munkában nem megy el: a sorából azonnal kikerül, és érthető hibát kap."""
     kuldott = []
+    hiba = None
     for t in tetelek:
         if t["szerep"] == "kliens" and f.get("allapot") not in KLIENS_UZENHET:
-            raise FelmeroHiba("FELMERO_ALLAPOT", "A feature állapota (%s) nem engedi az üzenetet." % f.get("allapot"), KILEP_MEGTAGADVA)
+            kimeno_torol(f["name"], t["id"])
+            hiba = hiba or FelmeroHiba("FELMERO_ALLAPOT", lezart_uzenet_hiba(f.get("allapot")), KILEP_MEGTAGADVA)
+            continue
         if len(t["szoveg"]) > UZENET_MAX or not t["szoveg"].strip():
             raise FelmeroHiba("FELMERO_URES_VAGY_HOSSZ", "Az üzenet üres vagy túl hosszú.", KILEP_HASZNALAT)
         eredmeny = p.uzenet_ir(f["name"], t["szerep"], t["szoveg"], t["id"], t.get("fajl"))
@@ -1569,6 +1623,8 @@ def uzenet_kuld(p, f, tetelek):
             f["allapot"] = "Interjú"
         kuldott.append({"name": eredmeny["name"], "sorszam": eredmeny["sorszam"], "szerep": t["szerep"],
                         "mar_volt": eredmeny["mar_volt"]})
+    if hiba:
+        raise hiba
     return kuldott
 
 

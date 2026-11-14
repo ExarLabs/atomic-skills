@@ -1,6 +1,6 @@
 ---
 name: erp-plan
-description: "ERP Plan: az EXAR ERP-hez tartozó munkáid belépője. Megmutatja a nyitott és a lezárt munkákat, új munkát nyit, bármelyiket folytatja, válaszol a kérdéseidre a projekt anyagából, és mindig megmondja a következő lépést. Használd, ha a felhasználó ERP-fejlesztésről, igényről, munkáról, felmérésről vagy a portálhoz kapcsolódásról beszél, vagy nem tudja, hol tart. Hívószavak: 'ERP Plan', 'mi a következő lépés', 'hol tartunk', 'mutasd a munkáimat', 'új munka', 'folytassuk', 'kérdésem van a projektről'. English: entry point for EXAR ERP work items. Triggers: 'ERP Plan', 'what is next', 'where are we', 'list my work items', 'new work item', 'continue', 'I have a question about the project'."
+description: "ERP Plan: az EXAR ERP-hez tartozó munkáid belépője. Megmutatja a nyitott és a lezárt munkákat, új munkát nyit, bármelyiket folytatja, válaszol a kérdéseidre a projekt anyagából, és mindig megmondja a következő lépést. Használd, ha a felhasználó ERP-fejlesztésről, igényről, munkáról, felmérésről vagy a portálhoz kapcsolódásról beszél, vagy nem tudja, hol tart. Hívószavak: 'ERP Plan', 'ERP Planner', 'erp plan', 'mi a következő lépés', 'hol tartunk', 'mutasd a munkáimat', 'új munka', 'folytassuk', 'kérdésem van a projektről'. English: entry point for EXAR ERP work items. Triggers: 'ERP Plan', 'ERP Planner', 'erp plan', 'what is next', 'where are we', 'list my work items', 'new work item', 'continue', 'I have a question about the project'."
 ---
 
 # ERP Plan
