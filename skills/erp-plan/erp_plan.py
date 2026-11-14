@@ -227,6 +227,138 @@ def hianylista(elemek, osszefoglalo_db, allapot):
     }
 
 
+# ---------------------------------------------------------------------------
+# Munkák listája és a következő lépés (4.1, 4.2)
+# ---------------------------------------------------------------------------
+
+ALLAPOT_CSOPORT = {
+    "Vázlat": ("nyitott", "nalad"), "Interjú": ("nyitott", "nalad"),
+    "Visszaküldve": ("nyitott", "nalad"), "Bírálatra vár": ("nyitott", "mernoknel"),
+    "Elfogadva": ("lezart", "lezarva"), "Lezárva": ("lezart", "lezarva"),
+}
+KINEL_SORREND = {"nalad": 0, "mernoknel": 1, "lezarva": 2}
+
+
+def munka_sor(feature, projekt):
+    csoport, kinel = ALLAPOT_CSOPORT.get(feature.get("allapot"), ("nyitott", "nalad"))
+    projekt = projekt or {}
+    return {"feature": feature["name"], "cim": feature.get("cim"),
+            "projekt": feature.get("projekt") or projekt.get("name"), "projekt_cim": projekt.get("cim"),
+            "allapot": feature.get("allapot"), "csoport": csoport, "kinel": kinel,
+            "teljesseg_szazalek": feature.get("teljesseg_szazalek") or 0,
+            "utolso_uzenet": feature.get("utolso_uzenet"), "modified": feature.get("modified")}
+
+
+def munkak_rendez(sorok, szuro="nyitott"):
+    """Nalad, mernoknel, lezarva sorrendben; csoporton belül a legfrissebb elöl."""
+    valasztott = [s for s in sorok if szuro == "mind" or s["csoport"] == szuro]
+    valasztott = sorted(valasztott, key=lambda s: s.get("modified") or "", reverse=True)
+    return sorted(valasztott, key=lambda s: KINEL_SORREND[s["kinel"]])
+
+
+def munkak_db(sorok):
+    nyitott = sum(1 for s in sorok if s["csoport"] == "nyitott")
+    return {"nyitott": nyitott, "lezart": len(sorok) - nyitott, "mind": len(sorok)}
+
+
+def ellenoriz(kontextus, testverek, kimeno_db, ma):
+    """A szabálymotor helye (INK-01 ... INK-19, P1-04). Most még nem talál semmit."""
+    return []
+
+
+def _valasz(feature, lepes, skill, szoveg, parancs=None, reszletek=None):
+    return {"feature": feature, "lepes": lepes, "skill": skill, "szoveg": szoveg,
+            "parancs": parancs, "reszletek": reszletek or {}}
+
+
+def munka_lepes(m):
+    """A munka szintű 12 szabály (4.2 tábla). Az első illeszkedő sor nyer."""
+    f = m["feature"]
+    hiba_db = sum(1 for t in m["talalatok"] if t["suly"] == "hiba")
+    figyelem_db = sum(1 for t in m["talalatok"] if t["suly"] == "figyelem" and not t.get("elfogadva"))
+    kotelezo = [h for h in m["hianylista"]["hianyzik"] if h["kotelezo"]]
+    nem_kotelezo = [h for h in m["hianylista"]["hianyzik"]
+                    if not h["kotelezo"] and h["kod"] not in m["kihagyott"]]
+    frappe = m.get("frappe") or {}
+    frappe_hianyzik = []
+    if frappe.get("elerheto") and not frappe.get("kihagyva"):
+        frappe_hianyzik = [t for t in frappe.get("temak", []) if t.get("allapot") == "Hiányzik"]
+
+    if m["allapot"] in ("Elfogadva", "Lezárva"):
+        return _valasz(f, "LEZART", "erp-plan-munkak",
+                       "Ez a munka lezárult. Kérdezhetsz róla, vagy nyithatsz újat.",
+                       reszletek={"allapot": m["allapot"]})
+    if m["allapot"] == "Bírálatra vár":
+        return _valasz(f, "VARAKOZAS", "erp-plan",
+                       "Ez a munka a mérnöknél van. Üzenhetsz neki, vagy dolgozhatunk egy másikon.")
+    if m["kimeno_db"] > 0:
+        return _valasz(f, "KIMENO", "erp-plan-felmeres",
+                       "%d üzeneted még nincs fent: töltsük fel." % m["kimeno_db"],
+                       parancs="kimeno " + f)
+    if hiba_db:
+        return _valasz(f, "ELLENTMONDAS", "erp-plan-ellenorzes",
+                       "%d ellentmondást találtam a leírásban: tisztázzuk." % hiba_db)
+    if m["kliens_uzenet_db"] == 0:
+        return _valasz(f, "SZABAD_MESE", "erp-plan-felmeres",
+                       "Meséld el, mi a gond ma, és mit szeretnél helyette.")
+    if m["allapot"] == "Visszaküldve" and m["pontositando"]:
+        elso = m["pontositando"][0]
+        return _valasz(f, "PONTOSITAS", "erp-plan-felmeres",
+                       "A mérnök pontosítást kért: %s." % elso["cim"],
+                       reszletek={"kod": elso["kod"], "megjegyzes": elso.get("megjegyzes") or "",
+                                  "visszakuldes_indoka": m.get("visszakuldes_indoka")})
+    if kotelezo:
+        h = kotelezo[0]
+        return _valasz(f, "KERDES", "erp-plan-felmeres", "A következő kérdés: %s." % h["cim"],
+                       reszletek={"kod": h["kod"], "cim": h["cim"], "mit_kell_tudni": h["mit_kell_tudni"],
+                                  "okok": h["okok"]})
+    if nem_kotelezo:
+        h = nem_kotelezo[0]
+        return _valasz(f, "KERDES_NEM_KOTELEZO", "erp-plan-felmeres",
+                       "Még egy nem kötelező pont: %s. Kihagyható." % h["cim"],
+                       reszletek={"kod": h["kod"], "cim": h["cim"], "mit_kell_tudni": h["mit_kell_tudni"],
+                                  "okok": h["okok"]})
+    if frappe_hianyzik:
+        t = frappe_hianyzik[0]
+        return _valasz(f, "FRAPPE", "erp-plan-frappe",
+                       "Jöhetnek a részletes kérdések, hogy a mérnök fejlesztésre kész leírást kapjon: %s." % t["cim"],
+                       reszletek={"tema": t["kod"], "tema_cim": t["cim"]})
+    if figyelem_db:
+        return _valasz(f, "FIGYELEM", "erp-plan-ellenorzes",
+                       "%d dolgot érdemes még tisztázni beküldés előtt." % figyelem_db)
+    if m["osszefoglalo_db"] == 0 or m.get("ink07"):
+        return _valasz(f, "OSSZEFOGLALO", "erp-plan-felmeres", "Írjunk friss összefoglalót.")
+    return _valasz(f, "BEKULDES", "erp-plan-felmeres",
+                   "Minden megvan: felolvasom az összefoglalót, és ha jó, beküldhetjük.")
+
+
+def kapcsolodas_oka(h):
+    if h.kod == "FELMERO_BEJELENTKEZES":
+        return "belepes"
+    if h.kilepes == KILEP_HALOZAT:
+        return "halozat"
+    return "nincs_beallitas"
+
+
+def kovetkezo_lepes(adat):
+    """Tiszta függvény: a már összegyűjtött állapotból egyetlen javaslat (4.2)."""
+    if adat.get("kapcsolodas"):
+        return _valasz(None, "KAPCSOLODAS", "erp-plan-kapcsolat", "Előbb kapcsolódjunk az EXAR ERP-hez.",
+                       reszletek={"ok": adat["kapcsolodas"]})
+    if adat.get("feature"):
+        return munka_lepes(adat["munka"])
+    if adat.get("aktiv_projekt_db", 0) == 0:
+        return _valasz(None, "UJ_PROJEKT", "erp-plan-munkak", "Még nincs projekted: nyissuk meg az elsőt.")
+    if adat.get("munka"):
+        r = munka_lepes(adat["munka"])
+        r["reszletek"]["tovabbi_nyitott"] = adat.get("tovabbi_nyitott", 0)
+        return r
+    if adat.get("mernoknel_db", 0) > 0:
+        return _valasz(None, "VARAKOZAS", "erp-plan",
+                       "%d munkád a mérnöknél van. Közben nyithatsz újat, vagy kérdezhetsz." % adat["mernoknel_db"])
+    return _valasz(None, "UJ_MUNKA", "erp-plan-munkak", "Nincs nyitott munkád. Nyissunk egy újat?")
+
+
 def hibakod_kiolvas(szoveg):
     m = HIBAKOD_RE.search(szoveg or "")
     return m.group(1) if m else "ISMERETLEN"
@@ -372,6 +504,32 @@ def kimeno_iras(feature, tetelek):
             f.write(json.dumps(t, ensure_ascii=False) + "\n")
     os.chmod(tmp, 0o600)
     os.replace(tmp, utvonal)
+
+
+def helyi_utvonal(feature):
+    return os.path.join(os.path.dirname(os.path.abspath(config_utvonal())), "helyi", feature + ".json")
+
+
+def helyi_olvas(feature):
+    utvonal = helyi_utvonal(feature)
+    if not os.path.exists(utvonal):
+        return {"elfogadott": [], "kihagyott": []}
+    with open(utvonal, encoding="utf-8") as f:
+        adat = json.load(f)
+    return {"elfogadott": list(adat.get("elfogadott", [])), "kihagyott": list(adat.get("kihagyott", []))}
+
+
+def helyi_iras(feature, adat):
+    utvonal = helyi_utvonal(feature)
+    mappa = os.path.dirname(utvonal)
+    os.makedirs(mappa, mode=0o700, exist_ok=True)
+    os.chmod(mappa, 0o700)
+    ideiglenes = utvonal + ".tmp"
+    fd = os.open(ideiglenes, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(adat, f, ensure_ascii=False, indent=2)
+    os.chmod(ideiglenes, 0o600)
+    os.replace(ideiglenes, utvonal)
 
 
 def beolvas(utvonal):
@@ -525,6 +683,11 @@ class Proto:
 
     def projektek(self):
         return self.lista("Felmero Projekt", ["name", "cim", "crm_organization", "allapot", "modified"], rendezes="modified desc")
+
+    def munka_lista(self, projekt):
+        return self.lista("Felmero Feature", ["name", "cim", "projekt", "allapot", "teljesseg_szazalek",
+                                              "utolso_uzenet", "modified"],
+                          [["projekt", "=", projekt]], rendezes="modified desc")
 
     def featurek(self, projekt):
         return self.lista("Felmero Feature", ["name", "cim", "allapot", "teljesseg_szazalek", "modified"],
@@ -872,6 +1035,70 @@ def cmd_elem(p, a):
             "hianylista": h}
 
 
+def munka_reszlet(p, f):
+    uz = p.kliens_uzenetek(f["name"])
+    el, biz, _ = szamol(f.get("elemek") or [], f.get("bizonyitekok") or [], uz)
+    osz = p.osszefoglalok(f["name"])
+    h = hianylista(el, len(osz), f.get("allapot"))
+    kimeno_db = len(kimeno_olvas(f["name"]))
+    talalatok = ellenoriz(dict(f, elemek=el, bizonyitekok=biz), [], kimeno_db, datetime.date.today())
+    return {"feature": f["name"], "cim": f.get("cim"), "allapot": f.get("allapot"), "kimeno_db": kimeno_db,
+            "kliens_uzenet_db": len(uz), "osszefoglalo_db": len(osz), "talalatok": talalatok,
+            "ink07": any(t["szabaly"] == "INK-07" for t in talalatok), "hianylista": h,
+            "kihagyott": helyi_olvas(f["name"])["kihagyott"],
+            "pontositando": [{"kod": e["kod"], "cim": CIMEK.get(e["kod"], e["kod"]),
+                              "megjegyzes": e.get("mernok_megjegyzes") or ""}
+                             for e in el if e.get("mernok_allapot") == "Pontosítandó"],
+            "visszakuldes_indoka": f.get("visszakuldes_indoka"), "frappe": None}
+
+
+def kovetkezo_adat(p, feature):
+    if feature:
+        f = p.feature(feature)
+        return {"kapcsolodas": None, "feature": feature, "munka": munka_reszlet(p, f)}
+    projektek = p.projektek()
+    sorok = []
+    for pr in projektek:
+        sorok += [munka_sor(f, pr) for f in p.munka_lista(pr["name"])]
+    nalad = [s for s in munkak_rendez(sorok, "nyitott") if s["kinel"] == "nalad"]
+    munka = munka_reszlet(p, p.feature(nalad[0]["feature"])) if nalad else None
+    return {"kapcsolodas": None, "feature": None,
+            "aktiv_projekt_db": sum(1 for pr in projektek if pr.get("allapot") == "Aktív"),
+            "mernoknel_db": sum(1 for s in sorok if s["kinel"] == "mernoknel"),
+            "munka": munka, "tovabbi_nyitott": len(nalad) - 1 if nalad else 0}
+
+
+def kovetkezo_cli(a):
+    if a.kihagy:
+        if not a.feature:
+            raise FelmeroHiba("FELMERO_ELEM_ADAT", "A kihagyáshoz munka kell: add meg a FT-azonosítót.", KILEP_HASZNALAT)
+        if a.kihagy not in KODOK or a.kihagy in KOTELEZO:
+            raise FelmeroHiba("FELMERO_ELEM_ADAT", "Csak nem kötelező elem hagyható ki.", KILEP_HASZNALAT)
+        helyi = helyi_olvas(a.feature)
+        if a.kihagy not in helyi["kihagyott"]:
+            helyi["kihagyott"].append(a.kihagy)
+        helyi_iras(a.feature, helyi)
+    try:
+        p = adapter(kell_cfg())
+        adat = kovetkezo_adat(p, a.feature)
+    except FelmeroHiba as h:
+        if h.kilepes not in (KILEP_BEALLITAS, KILEP_HALOZAT):
+            raise
+        return kovetkezo_lepes({"kapcsolodas": kapcsolodas_oka(h)})
+    return kovetkezo_lepes(adat)
+
+
+def cmd_munkak(p, a):
+    if a.projekt:
+        projektek = [p.egy("Felmero Projekt", a.projekt)]
+    else:
+        projektek = p.projektek()
+    sorok = []
+    for pr in projektek:
+        sorok += [munka_sor(f, pr) for f in p.munka_lista(pr["name"])]
+    return {"allapot_szuro": a.allapot, "db": munkak_db(sorok), "munkak": munkak_rendez(sorok, a.allapot)}
+
+
 def cmd_osszefoglalo(p, a):
     f = p.feature(a.feature)
     irhato_feature(f)
@@ -1075,6 +1302,7 @@ KEZELOK = {
     "osszefoglalok": cmd_osszefoglalok, "hivatkozas": cmd_hivatkozas, "hivatkozas-torol": cmd_hivatkozas_torol,
     "feltolt": cmd_feltolt, "fajlok": cmd_fajlok, "fajl": cmd_fajl, "var": cmd_var, "letolt": cmd_letolt,
     "forma": cmd_forma, "bekuld": cmd_bekuld, "visszavon": cmd_visszavon,
+    "munkak": cmd_munkak,
 }
 
 
@@ -1206,6 +1434,14 @@ def build_parser():
     x.add_argument("feature", type=nev_tipus("FT"))
     x.add_argument("--indok")
 
+    x = sub.add_parser("munkak", help="a munkáid: nyitott, lezárt vagy mind")
+    x.add_argument("--allapot", choices=("nyitott", "lezart", "mind"), default="nyitott")
+    x.add_argument("--projekt", type=nev_tipus("FP"))
+
+    x = sub.add_parser("kovetkezo", help="a következő lépés: egy mondat és a parancs")
+    x.add_argument("feature", nargs="?", type=nev_tipus("FT"))
+    x.add_argument("--kihagy", metavar="KÓD", help="nem kötelező elem kihagyása")
+
     sub.add_parser("verzio", help="a CLI és az API-verzió")
     return p
 
@@ -1224,6 +1460,8 @@ def futtat(a):
         return {"cli": VERSION, "api_verzio": API_VERZIO}
     if a.parancs == "beallit":
         return cmd_beallit(a)
+    if a.parancs == "kovetkezo":
+        return kovetkezo_cli(a)
     p = adapter(kell_cfg())
     return KEZELOK[a.parancs](p, a)
 
