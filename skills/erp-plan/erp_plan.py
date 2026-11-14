@@ -33,6 +33,7 @@ API_VERZIO = 1
 USER_AGENT = "atomic-skills-erp-plan/0.2.0"
 
 KILEP_SIKER, KILEP_HASZNALAT, KILEP_BEALLITAS, KILEP_MEGTAGADVA, KILEP_HALOZAT = 0, 2, 3, 4, 5
+KILEP_TALALAT = 6
 
 IDEZET_MIN, IDEZET_MAX = 8, 1000
 UZENET_MAX = 20000
@@ -261,9 +262,344 @@ def munkak_db(sorok):
     return {"nyitott": nyitott, "lezart": len(sorok) - nyitott, "mind": len(sorok)}
 
 
-def ellenoriz(kontextus, testverek, kimeno_db, ma):
-    """A szabálymotor helye (INK-01 ... INK-19, P1-04). Most még nem talál semmit."""
+NYITOTT_ALLAPOTOK = ("Vázlat", "Interjú", "Visszaküldve", "Bírálatra vár")
+KITOLTOTT_ALLAPOTOK = ("Kész", "Hiányos")
+SZAM_RE = re.compile(r"\d+(?:[ .]\d{3})*(?:,\d+)?")
+EGYSEG = r"(óra|perc|nap|hét|hónap|év|fő|db|darab|számla|tétel|százalék|%|RON|lej|EUR|euró|Ft|forint)"
+SZAM_EGYSEG_RE = re.compile(r"(?<![\w,.])(\d+(?:[ .]\d{3})*(?:,\d+)?)\s*" + EGYSEG + r"(?!\w)")
+HOMALY_SZAVAK = ("gyors", "könnyű", "egyszerű", "felhasználóbarát", "jó", "megfelelő", "szép", "hatékony",
+                 "stabil", "megbízható", "modern", "rugalmas", "intuitív", "kényelmes")
+MEGFIGYELHETO_TOVEK = ("megjelen", "létrejö", "elkészül", "megkap", "kiment", "szerepel", "egyezik", "látsz",
+                       "látható", "legfeljebb", "legalább", "belül", "nem enged", "hibaüzenet")
+ELLENORZES_SULY = {"hiba": 0, "figyelem": 1}
+SZAMPAROK_09 = (("B1", "D2"), ("B2", "UZ"), ("B4", "TD"))
+
+
+def szam_kanon(szam):
+    return szam.replace(" ", "").replace(".", "").replace(",", ".")
+
+
+def szamok(szoveg):
+    return {szam_kanon(t) for t in SZAM_RE.findall(szoveg or "")}
+
+
+def sorok_szovegbol(szoveg):
+    """A szöveg sorai (sortörés és pontosvessző mentén), a sor eleji jelölők nélkül."""
+    ki = []
+    for resz in re.split(r"[\n;]", szoveg or ""):
+        sor = normal(re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", resz))
+        if sor:
+            ki.append(sor)
+    return ki
+
+
+def tetelek_szovegbol(szoveg):
+    """A tételek: legalább 12 karakter és két szó, casefold után."""
+    return [s for s in sorok_szovegbol(szoveg) if len(s.casefold()) >= 12 and len(s.split()) >= 2]
+
+
+def _ert(k, kod):
+    """Az elem sora, ha ki van töltve (Kész vagy Hiányos, és van értéke)."""
+    for e in k["elemek"]:
+        if e.get("kod") == kod and e.get("allapot") in KITOLTOTT_ALLAPOTOK and normal(e.get("ertek")):
+            return e
+    return None
+
+
+def _biz(k, kod, csak_ervenyes=False):
+    return [b for b in k["bizonyitekok"] if b.get("elem") == kod and (b.get("ervenyes") or not csak_ervenyes)]
+
+
+def _talalat(kod, suly, elemek, ertekek, leiras, kerdes):
+    szoveg = "|".join("" if v is None else normal(str(v)) for v in ertekek)
+    ujj = hashlib.sha1((kod + "|" + szoveg).encode("utf-8")).hexdigest()[:10]
+    return {"szabaly": kod, "suly": suly, "elemek": elemek, "leiras": leiras, "kerdes": kerdes,
+            "ujjlenyomat": ujj, "reszletek": {}}
+
+
+def _ink01(k, tv, kd, ma):
+    ki = []
+    for kod in KODOK:
+        e = _ert(k, kod)
+        if e is None:
+            continue
+        for b in _biz(k, kod):
+            if not b.get("ervenyes"):
+                ki.append(_talalat("INK-01", "hiba", [kod], [e.get("ertek"), b.get("idezet")],
+                                   "Az idézet nincs meg szó szerint a kliens-üzenetben.",
+                                   "Ezt rögzítettük a(z) %s pontnál: «%s». A hozzá tartozó mondatot («%s») "
+                                   "nem találom az üzeneteid között. Elmondanád újra a saját szavaiddal?"
+                                   % (CIMEK[kod], normal(e.get("ertek")), normal(b.get("idezet")))))
+    return ki
+
+
+def _ink02(k, tv, kd, ma):
+    ki = []
+    for kod in KODOK:
+        e = _ert(k, kod)
+        if e is None:
+            continue
+        nevek = {b.get("uzenet") for b in _biz(k, kod, True)}
+        uzenetek = [u for u in k["uzenetek"] if u["name"] in nevek]
+        if not uzenetek:
+            continue
+        van = set()
+        for u in uzenetek:
+            van |= szamok(u.get("szoveg"))
+        hianyzo = next((s for resz in (e.get("ertek"), e.get("kiegeszites"))
+                        for s in SZAM_RE.findall(resz or "") if szam_kanon(s) not in van), None)
+        if hianyzo:
+            ki.append(_talalat("INK-02", "figyelem", [kod], [e.get("ertek"), e.get("kiegeszites")],
+                               "Az elemben szereplő szám nincs az idézett üzenetben.",
+                               "A(z) %s pontnál ez a szám áll: %s. Az üzenetedben nem találom. Honnan való, és pontos?"
+                               % (CIMEK[kod], hianyzo)))
+    return ki
+
+
+def _ink03(k, tv, kd, ma):
+    c1, c2 = _ert(k, "C1"), _ert(k, "C2")
+    if not c1 or not c2:
+        return []
+    d1, d2 = _datum(c1.get("datum")), _datum(c2.get("datum"))
+    if d1 and d2 and d2 < d1:
+        return [_talalat("INK-03", "hiba", ["C1", "C2"], [c1.get("datum"), c2.get("datum")],
+                         "A határidő a kezdés előtt van.",
+                         "Kezdésnek %s, határidőnek %s van felírva: a határidő a kezdés előtt van. Melyik a helyes?"
+                         % (c1.get("datum"), c2.get("datum")))]
     return []
+
+
+def _ink04(k, tv, kd, ma):
+    c1, c2 = _ert(k, "C1"), _ert(k, "C2")
+    if not c1 or not c2:
+        return []
+    d1, d2 = _datum(c1.get("datum")), _datum(c2.get("datum"))
+    if d1 and d2:
+        nap = (d2 - d1).days
+        if nap > 28 or nap < 7:
+            return [_talalat("INK-04", "figyelem", ["C1", "C2"], [c1.get("datum"), c2.get("datum")],
+                             "A kezdés és a határidő között szokatlan a távolság.",
+                             "A kezdés (%s) és a határidő (%s) között %d nap van. Így gondoltad?"
+                             % (c1.get("datum"), c2.get("datum"), nap))]
+    return []
+
+
+def _ink05(k, tv, kd, ma):
+    c1 = _ert(k, "C1")
+    d1 = _datum(c1.get("datum")) if c1 else None
+    if d1 and d1 < ma and k.get("allapot") in ("Vázlat", "Interjú", "Visszaküldve"):
+        return [_talalat("INK-05", "figyelem", ["C1"], [c1.get("datum")],
+                         "A felírt kezdés napja már elmúlt.",
+                         "A kezdésnek felírt nap (%s) már elmúlt. Mi legyen az új kezdés?" % c1.get("datum"))]
+    return []
+
+
+def _ink06(k, tv, kd, ma):
+    d4 = _ert(k, "D4")
+    if d4 and _egesz(d4.get("szam")) not in MERESI_NAPOK:
+        return [_talalat("INK-06", "hiba", ["D4"], [d4.get("ertek"), d4.get("szam")],
+                         "A mérési időszak nem 30, 60 vagy 90 nap.",
+                         "A mérési időszak 30, 60 vagy 90 nap lehet. Melyiket választod?")]
+    return []
+
+
+def _ink07(k, tv, kd, ma):
+    osz = k.get("osszefoglalo")
+    if osz and k["uzenetek"]:
+        utolso = max(u["sorszam"] for u in k["uzenetek"])
+        if osz["uzenet_sorszamig"] < utolso:
+            db = sum(1 for u in k["uzenetek"] if u["sorszam"] > osz["uzenet_sorszamig"])
+            return [_talalat("INK-07", "figyelem", [], [osz["verzio"], osz["uzenet_sorszamig"], utolso],
+                             "Új üzenetek érkeztek az utolsó összefoglaló óta.",
+                             "Az utolsó összefoglaló (%s. verzió) óta %d új üzeneted van. Frissítsem az összefoglalót?"
+                             % (osz["verzio"], db))]
+    return []
+
+
+def _ink08(k, tv, kd, ma):
+    ki = []
+    for hv in k.get("hivatkozasok", []):
+        if hv.get("allapot") in (None, "Lezárva"):
+            ki.append(_talalat("INK-08", "figyelem", [], [hv["cel"], hv.get("allapot")],
+                               "A hivatkozott munka lezárult, vagy nem érhető el.",
+                               "Ez a munka a(z) «%s» munkára hivatkozik, amely lezárult. Marad a hivatkozás, "
+                               "vagy már nem érvényes?" % (hv.get("cel_cim") or hv["cel"])))
+    return ki
+
+
+def _egyseg_szamok(szoveg):
+    ki = {}
+    for szam, egyseg in SZAM_EGYSEG_RE.findall(szoveg or ""):
+        ki.setdefault(egyseg.casefold(), set()).add(szam_kanon(szam))
+    return ki
+
+
+def _ink09(k, tv, kd, ma):
+    ki = []
+    for a, b in SZAMPAROK_09:
+        ea, eb = _ert(k, a), _ert(k, b)
+        if not ea or not eb:
+            continue
+        sa, sb = _egyseg_szamok(ea.get("ertek")), _egyseg_szamok(eb.get("ertek"))
+        for egyseg in sorted(set(sa) & set(sb)):
+            if sa[egyseg].isdisjoint(sb[egyseg]):
+                szam_a, szam_b = sorted(sa[egyseg])[0], sorted(sb[egyseg])[0]
+                ki.append(_talalat("INK-09", "figyelem", [a, b], [ea.get("ertek"), eb.get("ertek")],
+                                   "Két pontban eltérő szám ugyanarra az egységre.",
+                                   "A(z) %s pontnál %s %s, a(z) %s pontnál %s %s szerepel. Ugyanarról van szó? "
+                                   "Melyik a pontos?" % (CIMEK[a], szam_a, egyseg, CIMEK[b], szam_b, egyseg)))
+                break
+    return ki
+
+
+def _ink10(k, tv, kd, ma):
+    ki = []
+    cel = [e for e in (_ert(k, "B2"), _ert(k, "UZ")) if e]
+    hay = " ".join(normal(e.get("ertek")) for e in cel).casefold()
+    for kod in ("B3", "KZ"):
+        e = _ert(k, kod)
+        if not e:
+            continue
+        for tetel in tetelek_szovegbol(e.get("ertek")):
+            if tetel.casefold() in hay:
+                ki.append(_talalat("INK-10", "hiba", [kod] + [c["kod"] for c in cel],
+                                   [tetel, e.get("ertek")] + [c.get("ertek") for c in cel],
+                                   "Kizárt tétel szerepel a megoldás leírásában.",
+                                   "Ezt kizártad: «%s», de a megoldás leírásában is szerepel. Benne van, vagy nincs?"
+                                   % tetel))
+    return ki
+
+
+def _ink11(k, tv, kd, ma):
+    e = _ert(k, "D1")
+    if not e:
+        return []
+    ki = []
+    for sor in sorok_szovegbol(e.get("ertek")):
+        cf = sor.casefold()
+        szavak = set(re.findall(r"\w+", cf))
+        homaly = any(h in szavak for h in HOMALY_SZAVAK)
+        szam_van = bool(SZAM_RE.search(sor))
+        tove = any(t in cf for t in MEGFIGYELHETO_TOVEK)
+        if (homaly and not szam_van) or (not szam_van and not tove) or len(sor) < 15:
+            ki.append(_talalat("INK-11", "figyelem", ["D1"], [sor],
+                               "Az elfogadási feltétel nehezen ellenőrizhető.",
+                               "Ez az elfogadási feltétel nehezen ellenőrizhető: «%s». Miből látod majd átvételkor, "
+                               "igen vagy nem, konkrét adaton?" % sor))
+    return ki
+
+
+def _ink12(k, tv, kd, ma):
+    e = _ert(k, "D2")
+    if e and not SZAM_RE.search((e.get("ertek") or "") + " " + (e.get("kiegeszites") or "")):
+        return [_talalat("INK-12", "figyelem", ["D2"], [e.get("ertek"), e.get("kiegeszites")],
+                         "A kiinduló állapotban nincs szám.",
+                         "A kiinduló állapotnál nincs szám. Mennyi ma, és honnan tudod?")]
+    return []
+
+
+def _ink13(k, tv, kd, ma):
+    e = _ert(k, "D3")
+    if e and not SZAM_RE.search(e.get("ertek") or ""):
+        return [_talalat("INK-13", "figyelem", ["D3"], [e.get("ertek")],
+                         "A sikerkritériumban nincs szám.",
+                         "A sikerkritériumnál nincs szám. Mihez képest, mennyit vársz?")]
+    return []
+
+
+def _ink14(k, tv, kd, ma):
+    csoport = {}
+    for b in k["bizonyitekok"]:
+        if b.get("ervenyes"):
+            csoport.setdefault(normal(b.get("idezet")).casefold(), set()).add(b["elem"])
+    ki = []
+    for idezet, kodok in csoport.items():
+        if len(kodok) >= 3:
+            rendezett = sorted(kodok, key=KODOK.index)
+            ki.append(_talalat("INK-14", "figyelem", rendezett,
+                               [idezet] + [(_ert(k, kod) or {}).get("ertek") for kod in rendezett],
+                               "Ugyanaz a mondat több pontot is alátámaszt.",
+                               "Ugyanaz a mondatod támaszt alá %d pontot: %s. Mondanál mindegyikről külön is valamit?"
+                               % (len(rendezett), ", ".join(rendezett))))
+    return ki
+
+
+def _ink15(k, tv, kd, ma):
+    cim = normal(k.get("cim")).casefold()
+    if not cim:
+        return []
+    return [_talalat("INK-15", "figyelem", [], [cim, t["name"]],
+                     "Ugyanezzel a címmel másik nyitott munka van.",
+                     "Ugyanezzel a címmel van egy másik nyitott munkád (%s). Kettő kell, vagy az egyiket "
+                     "visszavonod?" % t["name"])
+            for t in tv if t.get("allapot") in NYITOTT_ALLAPOTOK and normal(t.get("cim")).casefold() == cim]
+
+
+def _ink16(k, tv, kd, ma):
+    ki = []
+    for kod in ("B3", "KZ"):
+        e = _ert(k, kod)
+        if not e:
+            continue
+        for t in tv[:20]:
+            if t.get("allapot") not in NYITOTT_ALLAPOTOK:
+                continue
+            b2 = next((x for x in t.get("elemek") or [] if x.get("kod") == "B2" and normal(x.get("ertek"))), None)
+            if not b2:
+                continue
+            hay = normal(b2.get("ertek")).casefold()
+            for tetel in tetelek_szovegbol(e.get("ertek")):
+                if tetel.casefold() in hay:
+                    ki.append(_talalat("INK-16", "figyelem", [kod], [tetel, t["name"], b2.get("ertek"), e.get("ertek")],
+                                       "Kizárt tétel más nyitott munkában szerepel kérésként.",
+                                       "Amit itt kizársz («%s»), azt a(z) %s munkában kéred. Szándékos a szétválasztás?"
+                                       % (tetel, t["name"])))
+    return ki
+
+
+def _ink17(k, tv, kd, ma):
+    ki = []
+    for fi in k.get("frappe_idezetek", []):
+        if idezet_keres(fi.get("idezet"), k["uzenetek"]) is None:
+            ki.append(_talalat("INK-17", "hiba", [], [fi.get("tema"), fi.get("idezet")],
+                               "A Frappe-lap idézete nincs meg a kliens szavai között.",
+                               "Ezt rögzítettük a(z) %s pontnál: «%s». A hozzá tartozó mondatot nem találom az "
+                               "üzeneteid között. Elmondanád újra a saját szavaiddal?"
+                               % (fi.get("cim"), normal(fi.get("idezet")))))
+    return ki
+
+
+def _ink18(k, tv, kd, ma):
+    if kd > 0:
+        return [_talalat("INK-18", "figyelem", [], [kd], "A helyi kimenő sor nincs feltöltve.",
+                         "%d üzeneted még nincs fent a szerveren. Feltöltsem most?" % kd)]
+    return []
+
+
+def _ink19(k, tv, kd, ma):
+    tarolt = k.get("tarolt_szazalek")
+    if tarolt is None:
+        return []
+    szamolt = teljesseg_szazalek({e["kod"]: e.get("allapot") for e in k["elemek"]})
+    if tarolt != szamolt:
+        return [_talalat("INK-19", "figyelem", [], [tarolt, szamolt],
+                         "A tárolt készültség eltér a számolttól.",
+                         "A tárolt készültség (%s%%) eltér a számolttól (%s%%). Újraszámolom." % (tarolt, szamolt))]
+    return []
+
+
+SZABALYOK = (_ink01, _ink02, _ink03, _ink04, _ink05, _ink06, _ink07, _ink08, _ink09, _ink10,
+             _ink11, _ink12, _ink13, _ink14, _ink15, _ink16, _ink17, _ink18, _ink19)
+
+
+def ellenoriz(kontextus, testverek, kimeno_db, ma):
+    """Tiszta függvény (4.3): a találatok listája, hiba elöl, azon belül szabálykód szerint.
+    Az elfogadást a hívó jelöli (a helyi fájl alapján)."""
+    talalatok = []
+    for szabaly in SZABALYOK:
+        talalatok.extend(szabaly(kontextus, list(testverek or []), kimeno_db, ma))
+    talalatok.sort(key=lambda t: (ELLENORZES_SULY[t["suly"]], t["szabaly"]))
+    return talalatok
 
 
 def _valasz(feature, lepes, skill, szoveg, parancs=None, reszletek=None):
@@ -1035,13 +1371,38 @@ def cmd_elem(p, a):
             "hianylista": h}
 
 
+def hivatkozasok(p, f):
+    ki = []
+    for hv in f.get("hivatkozasok") or []:
+        try:
+            cf = p.feature(hv["cel"])
+            ki.append({"cel": hv["cel"], "cel_cim": cf.get("cim"), "allapot": cf.get("allapot")})
+        except FelmeroHiba:
+            ki.append({"cel": hv["cel"], "cel_cim": hv["cel"], "allapot": None})
+    return ki
+
+
+def testverek(p, f):
+    nyitott = [s for s in p.munka_lista(f["projekt"]) if s["name"] != f["name"] and s.get("allapot") in NYITOTT_ALLAPOTOK]
+    return [{"name": s["name"], "cim": s.get("cim") or "", "allapot": s["allapot"],
+             "elemek": p.feature(s["name"]).get("elemek") or []} for s in nyitott[:20]]
+
+
 def munka_reszlet(p, f):
     uz = p.kliens_uzenetek(f["name"])
     el, biz, _ = szamol(f.get("elemek") or [], f.get("bizonyitekok") or [], uz)
     osz = p.osszefoglalok(f["name"])
     h = hianylista(el, len(osz), f.get("allapot"))
     kimeno_db = len(kimeno_olvas(f["name"]))
-    talalatok = ellenoriz(dict(f, elemek=el, bizonyitekok=biz), [], kimeno_db, datetime.date.today())
+    kontext = {"name": f["name"], "cim": f.get("cim") or "", "allapot": f.get("allapot"), "elemek": el,
+               "bizonyitekok": biz, "uzenetek": uz,
+               "osszefoglalo": {"verzio": osz[0]["verzio"], "uzenet_sorszamig": osz[0]["uzenet_sorszamig"]} if osz else None,
+               "hivatkozasok": hivatkozasok(p, f), "frappe_idezetek": [],
+               "tarolt_szazalek": f.get("teljesseg_szazalek")}
+    talalatok = ellenoriz(kontext, testverek(p, f), kimeno_db, datetime.date.today())
+    elfogadott = set(helyi_olvas(f["name"])["elfogadott"])
+    for t in talalatok:
+        t["elfogadva"] = t["suly"] == "figyelem" and t["ujjlenyomat"] in elfogadott
     return {"feature": f["name"], "cim": f.get("cim"), "allapot": f.get("allapot"), "kimeno_db": kimeno_db,
             "kliens_uzenet_db": len(uz), "osszefoglalo_db": len(osz), "talalatok": talalatok,
             "ink07": any(t["szabaly"] == "INK-07" for t in talalatok), "hianylista": h,
@@ -1086,6 +1447,28 @@ def kovetkezo_cli(a):
             raise
         return kovetkezo_lepes({"kapcsolodas": kapcsolodas_oka(h)})
     return kovetkezo_lepes(adat)
+
+
+def cmd_ellenorzes(p, a):
+    f = p.feature(a.feature)
+    if a.elfogad:
+        ismert = {t["ujjlenyomat"]: t for t in munka_reszlet(p, f)["talalatok"]}
+        helyi = helyi_olvas(a.feature)
+        for u in a.elfogad:
+            t = ismert.get(u)
+            if t is None:
+                raise FelmeroHiba("FELMERO_ELEM_ADAT", "Ehhez a munkához nincs ilyen találat: " + u, KILEP_HASZNALAT)
+            if t["suly"] == "hiba":
+                raise FelmeroHiba("FELMERO_ELEM_ADAT", "A hiba súlyú találatot nem lehet elfogadni.", KILEP_HASZNALAT)
+            if u not in helyi["elfogadott"]:
+                helyi["elfogadott"].append(u)
+        helyi_iras(a.feature, helyi)
+    talalatok = munka_reszlet(p, f)["talalatok"]
+    hiba_db = sum(1 for t in talalatok if t["suly"] == "hiba")
+    return {"_kilepes": KILEP_TALALAT if hiba_db else KILEP_SIKER, "feature": a.feature, "hiba_db": hiba_db,
+            "figyelem_db": sum(1 for t in talalatok if t["suly"] == "figyelem" and not t["elfogadva"]),
+            "elfogadott_db": sum(1 for t in talalatok if t["elfogadva"]),
+            "talalatok": [t for t in talalatok if a.mind or not t["elfogadva"]]}
 
 
 def cmd_munkak(p, a):
@@ -1303,6 +1686,7 @@ KEZELOK = {
     "feltolt": cmd_feltolt, "fajlok": cmd_fajlok, "fajl": cmd_fajl, "var": cmd_var, "letolt": cmd_letolt,
     "forma": cmd_forma, "bekuld": cmd_bekuld, "visszavon": cmd_visszavon,
     "munkak": cmd_munkak,
+    "ellenorzes": cmd_ellenorzes,
 }
 
 
@@ -1438,6 +1822,12 @@ def build_parser():
     x.add_argument("--allapot", choices=("nyitott", "lezart", "mind"), default="nyitott")
     x.add_argument("--projekt", type=nev_tipus("FP"))
 
+    x = sub.add_parser("ellenorzes", help="a leírás ellentmondásai és figyelmeztetései (6: van hiba)")
+    x.add_argument("feature", type=nev_tipus("FT"))
+    x.add_argument("--elfogad", action="append", default=[], metavar="UJJLENYOMAT",
+                   help="figyelem súlyú találat elfogadása (többször is adható)")
+    x.add_argument("--mind", action="store_true", help="az elfogadott találatokat is mutatja")
+
     x = sub.add_parser("kovetkezo", help="a következő lépés: egy mondat és a parancs")
     x.add_argument("feature", nargs="?", type=nev_tipus("FT"))
     x.add_argument("--kihagy", metavar="KÓD", help="nem kötelező elem kihagyása")
@@ -1476,8 +1866,9 @@ def main(argv=None):
         return h.kilepes
     if eredmeny is None:
         return KILEP_SIKER
+    kilepes = eredmeny.pop("_kilepes", KILEP_SIKER) if isinstance(eredmeny, dict) else KILEP_SIKER
     print(szoveges(eredmeny) if a.szoveg else json.dumps(eredmeny, ensure_ascii=False, indent=2))
-    return KILEP_SIKER
+    return kilepes
 
 
 if __name__ == "__main__":
