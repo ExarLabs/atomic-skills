@@ -428,6 +428,10 @@ class Kliens:
             with self.nyito.open(req, timeout=self.idotullepes) as r:
                 return r.read()
         except urllib.error.HTTPError as e:
+            if e.code == 403:
+                # A szerver szövege nem megy tovább: a hiba kimondhatná, mely cég adatait nem látod.
+                raise FelmeroHiba("FELMERO_TILTOTT", "Ehhez nincs hozzáférésed, vagy nem létezik.",
+                                  KILEP_MEGTAGADVA, 403)
             torzs_hiba = e.read().decode("utf-8", "replace")
             kod, uzenet = szerver_hiba(torzs_hiba)
             if kod == "ISMERETLEN":
@@ -933,7 +937,12 @@ def cmd_feltolt(p, a):
         mime = "text/markdown" if kit == "md" else (mimetypes.guess_type(nev)[0] or "application/octet-stream")
         szoveges = kit in SZOVEG_KITERJESZTES
         dt, docname = ("Felmero Feature", f["name"]) if f else ("Felmero Projekt", a.projekt)
-        file_doc = p.feltolt_bajt(dt, docname, nev, bajt, mime)
+        # A demó a .md kiterjesztést nem fogadja el: a szerverre .md.txt néven megy, a nyilvántartásban az eredeti név marad.
+        if kit == "md":
+            feltolt_nev, feltolt_mime = nev + ".txt", "text/plain"
+        else:
+            feltolt_nev, feltolt_mime = nev, mime
+        file_doc = p.feltolt_bajt(dt, docname, feltolt_nev, bajt, feltolt_mime)
         fa = p.uj("Felmero Fajl", {
             "fajl_nev": nev, "projekt": a.projekt, "feature": a.feature or "",
             "crm_organization": pr["crm_organization"], "tipus": "szoveg" if szoveges else "kep",
@@ -980,9 +989,12 @@ def cmd_letolt(p, a):
         file_nev = fa.get("file")
     bajt = p.fajl_letolt(p.fajl_file_url(file_nev))
     if a.ki:
-        with open(a.ki, "wb") as fh:
+        # A letöltött dokumentum csak a felhasználónak olvasható (600), akármi volt a fájl korábban.
+        fd = os.open(a.ki, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
             fh.write(bajt)
-        return {"ki": a.ki, "meret": len(bajt)}
+        os.chmod(a.ki, 0o600)
+        return {"ki": a.ki, "meret": len(bajt), "fajl_nev": fa.get("fajl_nev")}
     sys.stdout.buffer.write(bajt)
     return None
 
