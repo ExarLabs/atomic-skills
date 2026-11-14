@@ -18,6 +18,7 @@ import http.cookiejar
 import json
 import mimetypes
 import os
+import platform
 import re
 import shutil
 import stat
@@ -35,6 +36,7 @@ USER_AGENT = "atomic-skills-erp-plan/0.2.0"
 
 KILEP_SIKER, KILEP_HASZNALAT, KILEP_BEALLITAS, KILEP_MEGTAGADVA, KILEP_HALOZAT = 0, 2, 3, 4, 5
 KILEP_TALALAT = 6
+KILEP_ESZKOZ_LEJART = 5  # ugyanaz a szám, mint a hálózati hiba, de a kulcs-igényléshez külön jelentése van
 
 IDEZET_MIN, IDEZET_MAX = 8, 1000
 UZENET_MAX = 20000
@@ -1363,7 +1365,36 @@ class Atomi:
         adat = json_be(torzs).get("message")
         if not isinstance(adat, dict):
             raise FelmeroHiba("FELMERO_VALASZ", "Érvénytelen válasz a szervertől.", KILEP_HALOZAT)
-        return dict(adat, adapter="atomi")
+        return dict(adat, adapter="atomi", kulcs_vege=key[-4:])
+
+    def eszkoz_ker(self, url, email, eszkoz_nev):
+        """Vendég-végpont: eszközkód-kérés. A választ a hívó menti (titok), nem írja ki."""
+        AKTIV_UTAK[0] = ATOMI_UTAK
+        torzs = Kliens(url).keres("POST", "/api/method/atomi.felmero.api.eszkoz_kod_ker",
+                                  {"email": email, "eszkoz_nev": eszkoz_nev, "kliens_verzio": VERSION})
+        adat = json_be(torzs).get("message")
+        if not isinstance(adat, dict) or not adat.get("eszkoz_kod"):
+            raise FelmeroHiba("FELMERO_VALASZ", "Érvénytelen válasz a szervertől.", KILEP_HALOZAT)
+        return adat
+
+    def eszkoz_lekerdez(self, url, eszkoz_kod):
+        """Vendég-végpont: a kód állapota. A jóváhagyott kulcs egyszer jön."""
+        AKTIV_UTAK[0] = ATOMI_UTAK
+        k = Kliens(url)
+        k.titkok = [eszkoz_kod]
+        try:
+            torzs = k.keres("POST", "/api/method/atomi.felmero.api.eszkoz_kod_lekerdez", {"eszkoz_kod": eszkoz_kod})
+        except FelmeroHiba as h:
+            if h.http_kod == 403:
+                raise FelmeroHiba("FELMERO_ESZKOZ_ELUTASITVA", "A belépést elutasították.", KILEP_MEGTAGADVA, 403)
+            if h.http_kod == 417:
+                raise FelmeroHiba("FELMERO_ESZKOZ_LEJART", "Az eszközkód lejárt. Indítsd újra: kulcs-igenyles --indit",
+                                  KILEP_ESZKOZ_LEJART, 417)
+            raise
+        adat = json_be(torzs).get("message")
+        if not isinstance(adat, dict):
+            raise FelmeroHiba("FELMERO_VALASZ", "Érvénytelen válasz a szervertől.", KILEP_HALOZAT)
+        return adat
 
     def __getattr__(self, nev):
         if nev.startswith("__"):
@@ -2179,6 +2210,127 @@ def cmd_kapcsolat(a):
     return kimenet
 
 
+ESZKOZ_FAJL = "eszkoz.json"
+ESZKOZ_VARAKOZAS_MP = 5
+
+
+def eszkoz_utvonal():
+    return os.path.join(os.path.dirname(os.path.abspath(config_utvonal())), ESZKOZ_FAJL)
+
+
+def eszkoz_beolvas():
+    utvonal = eszkoz_utvonal()
+    try:
+        with open(utvonal, encoding="utf-8") as f:
+            adat = json.load(f)
+    except (OSError, ValueError):
+        raise FelmeroHiba("FELMERO_ESZKOZ_NINCS", "Nincs folyamatban lévő kulcsigénylés. Indítsd: kulcs-igenyles --indit",
+                          KILEP_HASZNALAT)
+    if not isinstance(adat, dict) or not adat.get("eszkoz_kod") or not adat.get("url"):
+        raise FelmeroHiba("FELMERO_ESZKOZ_NINCS", "Nincs folyamatban lévő kulcsigénylés. Indítsd: kulcs-igenyles --indit",
+                          KILEP_HASZNALAT)
+    return adat
+
+
+def eszkoz_torol():
+    try:
+        os.remove(eszkoz_utvonal())
+    except FileNotFoundError:
+        pass
+
+
+def kulcs_konfig_ellenoriz(cfg):
+    """Eszközkódos belépés csak az atomi adapterben van; proto beállításnál a beallit parancs az út."""
+    if cfg and cfg.get("adapter", "proto") == "proto":
+        raise FelmeroHiba("FELMERO_NEM_ELERHETO", "Ezen a szerveren nincs eszközkódos belépés. Használd a beallit parancsot.",
+                          KILEP_HASZNALAT)
+
+
+def szolgaltatas_el(url):
+    AKTIV_UTAK[0] = ATOMI_UTAK
+    try:
+        valasz = json_be(Kliens(url).keres("GET", "/api/method/atomi.felmero.api.szolgaltatas"))
+    except FelmeroHiba as h:
+        if h.http_kod is not None:
+            return False
+        raise
+    return isinstance(valasz, dict) and isinstance(valasz.get("message"), dict)
+
+
+def kulcs_indit(a):
+    utvonal = config_utvonal()
+    cfg = config_betoltes(utvonal) if os.path.exists(utvonal) else {}
+    kulcs_konfig_ellenoriz(cfg)
+    url = a.url or cfg.get("url")
+    if not url:
+        raise FelmeroHiba("FELMERO_NINCS_BEALLITAS", "Add meg a szerver címét: --url <cím>", KILEP_BEALLITAS)
+    if not url_ervenyes(url):
+        raise FelmeroHiba("FELMERO_URL", "Az URL csak https lehet (kivétel: localhost).", KILEP_BEALLITAS)
+    if not a.email:
+        raise FelmeroHiba("FELMERO_ELEM_ADAT", "Add meg az e-mail-címedet: --email <cím>", KILEP_HASZNALAT)
+    nev = a.eszkoz_nev or "Claude Code (%s)" % platform.system()
+    if not 1 <= len(nev) <= 60 or any(ord(c) < 32 or ord(c) == 127 for c in nev):
+        raise FelmeroHiba("FELMERO_HOSSZ", "Az eszköz neve 1-60 karakter lehet, vezérlőkarakter nélkül.", KILEP_HASZNALAT)
+    if not szolgaltatas_el(url):
+        raise FelmeroHiba("FELMERO_NEM_ELERHETO", "Ezen a szerveren nincs eszközkódos belépés. Használd a beallit parancsot.",
+                          KILEP_HASZNALAT)
+    adat = Atomi({"url": url}).eszkoz_ker(url, a.email, nev)
+    lejar = adat.get("lejar_mp", 600)
+    # A titok a helyi, 600-as fájlba kerül; a kimenet csak a felhasználói kódot és a címet adja.
+    config_mentes(eszkoz_utvonal(), {"url": url, "eszkoz_kod": adat["eszkoz_kod"], "eszkoz_nev": nev,
+                                     "felhasznaloi_kod": adat.get("felhasznaloi_kod"),
+                                     "ellenorzo_url": adat.get("ellenorzo_url"), "lejar_mp": lejar,
+                                     "kerve": most()})
+    return {"felhasznaloi_kod": adat.get("felhasznaloi_kod"), "ellenorzo_url": adat.get("ellenorzo_url"),
+            "lejar_mp": lejar, "eszkoz_nev": nev}
+
+
+def kulcs_befejez(var_mp):
+    utvonal = config_utvonal()
+    cfg = config_betoltes(utvonal) if os.path.exists(utvonal) else {}
+    kulcs_konfig_ellenoriz(cfg)
+    e = eszkoz_beolvas()
+    url, kod = e["url"], e["eszkoz_kod"]
+    kezdet = time.monotonic()
+    while True:
+        try:
+            valasz = Atomi({"url": url}).eszkoz_lekerdez(url, kod)
+        except FelmeroHiba as h:
+            if h.kod in ("FELMERO_ESZKOZ_ELUTASITVA", "FELMERO_ESZKOZ_LEJART"):
+                eszkoz_torol()
+            raise
+        allapot = valasz.get("allapot")
+        if allapot == "jovahagyva":
+            if not valasz.get("api_key") or not valasz.get("api_secret"):
+                eszkoz_torol()
+                raise FelmeroHiba("FELMERO_VALASZ", "Érvénytelen válasz a szervertől.", KILEP_HALOZAT)
+            config_mentes(utvonal, dict(cfg, url=url, adapter="atomi", api_key=valasz["api_key"],
+                                        api_secret=valasz["api_secret"], user=valasz.get("user") or ""))
+            eszkoz_torol()
+            return {"allapot": "jovahagyva", "user": valasz.get("user"),
+                    "szervezetek": valasz.get("szervezetek") or [], "kulcs_vege": valasz["api_key"][-4:]}
+        if allapot != "var":
+            eszkoz_torol()
+            raise FelmeroHiba("FELMERO_ESZKOZ_LEJART", "Az eszközkód lejárt. Indítsd újra: kulcs-igenyles --indit",
+                              KILEP_ESZKOZ_LEJART)
+        eltelt = time.monotonic() - kezdet
+        if eltelt >= var_mp:
+            return {"allapot": "var"}
+        time.sleep(min(ESZKOZ_VARAKOZAS_MP, var_mp - eltelt))
+
+
+def cmd_kulcs_igenyles(a):
+    if a.befejez:
+        return kulcs_befejez(a.var)
+    d = kulcs_indit(a)
+    if a.indit:
+        return d
+    # Kapcsoló nélkül: a kódot és a címet az stderr-re írja, és megvárja a jóváhagyást.
+    print("Nyisd meg ezt a címet: %s" % d["ellenorzo_url"], file=sys.stderr)
+    print("Ezt a kódot kell megadnod: %s" % d["felhasznaloi_kod"], file=sys.stderr)
+    return kulcs_befejez(d["lejar_mp"])
+
+
 def cmd_paros_allapot(a):
     """A PAROS Advisor telepítése a gépen. Hálózat nélkül, mindig 0-val lép ki."""
     mappa = os.path.expanduser("~/.paros-advisor")
@@ -2354,6 +2506,14 @@ def build_parser():
 
     sub.add_parser("paros-allapot", help="a PAROS Advisor telepítésének állapota (hálózat nélkül)")
 
+    x = sub.add_parser("kulcs-igenyles", help="eszközkódos belépés az atomi adapterhez (csak atomi)")
+    x.add_argument("--indit", action="store_true", help="kódot kér: a kód és a cím a kimenetben")
+    x.add_argument("--befejez", action="store_true", help="a jóváhagyás lekérdezése; jóváhagyásnál a kulcs a beállításba kerül")
+    x.add_argument("--url", help="a szerver címe, ha még nincs beállítás")
+    x.add_argument("--email", help="az a cím, amellyel a szervezetnél be tudsz lépni")
+    x.add_argument("--eszkoz-nev", help="az eszköz neve a jóváhagyó oldalon (1-60 karakter)")
+    x.add_argument("--var", type=int, default=0, help="befejezésnél legfeljebb ennyi másodpercig vár")
+
     x = sub.add_parser("frappe-kerdesek", help="a 12 Frappe-téma kérdései (FT-vel: a feature állapota)")
     x.add_argument("feature", nargs="?", type=nev_tipus("FT"))
 
@@ -2399,6 +2559,8 @@ def futtat(a):
         return cmd_kapcsolat(a)
     if a.parancs == "paros-allapot":
         return cmd_paros_allapot(a)
+    if a.parancs == "kulcs-igenyles":
+        return cmd_kulcs_igenyles(a)
     p = adapter(kell_cfg())
     return KEZELOK[a.parancs](p, a)
 

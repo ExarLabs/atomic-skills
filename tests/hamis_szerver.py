@@ -77,6 +77,9 @@ class HamisSzerver:
         self.szolgaltatas_el = False  # az atomi szolgaltatas-végpont él-e (eszközkódos mód)
         self.kulcsok = {}  # api_key -> api_secret, az atomi whoami végponthoz
         self.utolso_auth = None  # az utolsó whoami-kérés Authorization fejléce
+        self.eszkoz_mod = "var"  # az eszközkód-lekérdezés kimenetele: var, jovahagyva, elutasitva, lejart
+        self.jovahagyas = ("", "", "", [])  # kulcs, titok, felhasználó, cégek a jóváhagyott válaszhoz
+        self.kerelem = None  # az utolsó eszközkód-kérés adatai
         self.http =http.server.ThreadingHTTPServer(("127.0.0.1", 0), Kezelo)
         self.http.daemon_threads = True
         self.http.szerver = self
@@ -178,6 +181,10 @@ class HamisSzerver:
             if not self.szolgaltatas_el:
                 return self._json(404, {"exception": "DoesNotExistError", "message": "Nincs ilyen metódus."})
             return self._json(200, {"message": {"api_verzio": 1, "eszkoz_kod": True}})
+        if ut == "/api/method/atomi.felmero.api.eszkoz_kod_ker" and metodus == "POST":
+            return self._eszkoz_ker(torzs)
+        if ut == "/api/method/atomi.felmero.api.eszkoz_kod_lekerdez" and metodus == "POST":
+            return self._eszkoz_lekerdez(torzs)
         if ut == "/api/method/atomi.felmero.api.whoami":
             self.utolso_auth = fejlec.get("Authorization")
             kulcs, _, titok = (self.utolso_auth or "").partition(" ")[2].partition(":")
@@ -281,6 +288,43 @@ class HamisSzerver:
             r["modified"] = "2026-11-14 11:%02d:%02d" % (self._ido // 60 % 60, self._ido % 60)
             return self._json(200, {"data": r})
         return self._json(405, {"message": "Nem támogatott művelet."})
+
+    # Eszközkódos belépés (5.2, vendég-végpontok). A teszt a self.eszkoz_mod-dal állítja a kimenetelt:
+    # var, jovahagyva (egyszer ad kulcsot, utána lejart), elutasitva, lejart.
+
+    def _eszkoz_ker(self, torzs):
+        try:
+            adat = json.loads(torzs.decode("utf-8") or "{}")
+        except ValueError:
+            adat = {}
+        if "@" not in str(adat.get("email") or ""):
+            return self._json(417, {"exception": "ValidationError", "message": "Érvénytelen e-mail-cím."})
+        self._kod_szamlalo = getattr(self, "_kod_szamlalo", 0) + 1
+        kod = "eszkoz-kod-%04d-titkos" % self._kod_szamlalo
+        self.kerelem = {"eszkoz_kod": kod, "felhasznaloi_kod": "BCDF-GHJK", "eszkoz_nev": adat.get("eszkoz_nev")}
+        return self._json(200, {"message": {"eszkoz_kod": kod, "felhasznaloi_kod": "BCDF-GHJK",
+                                            "ellenorzo_url": self.url + "/felmero-eszkoz", "lejar_mp": 600,
+                                            "varakozas_mp": 5}})
+
+    def _eszkoz_lekerdez(self, torzs):
+        try:
+            adat = json.loads(torzs.decode("utf-8") or "{}")
+        except ValueError:
+            adat = {}
+        if not self.kerelem or adat.get("eszkoz_kod") != self.kerelem["eszkoz_kod"]:
+            return self._json(417, {"exception": "ValidationError", "message": "Lejárt vagy ismeretlen kód."})
+        mod = self.eszkoz_mod
+        if mod == "var":
+            return self._json(200, {"message": {"allapot": "var"}})
+        if mod == "jovahagyva":
+            kulcs, titok, felhasznalo, szervezetek = self.jovahagyas
+            self.kulcsok[kulcs] = titok
+            self.eszkoz_mod = "lejart"
+            return self._json(200, {"message": {"allapot": "jovahagyva", "api_key": kulcs, "api_secret": titok,
+                                                "user": felhasznalo, "szervezetek": szervezetek}})
+        if mod == "elutasitva":
+            return self._json(403, {"exception": "PermissionError", "message": "Elutasítva."})
+        return self._json(417, {"exception": "ValidationError", "message": "Lejárt."})
 
     def _json(self, status, adat):
         return status, {"Content-Type": "application/json"}, json.dumps(adat, ensure_ascii=False).encode("utf-8")
