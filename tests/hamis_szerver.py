@@ -143,7 +143,8 @@ class HamisSzerver:
         self.tarol("Felmero Feature", {"name": "FT-00001", "cim": "Próba munka", "projekt": "FP-00001",
                                        "crm_organization": CEG, "allapot": "Interjú", "elemek": [],
                                        "bizonyitekok": [], "hivatkozasok": [], "teljesseg_szazalek": 0,
-                                       "uzenet_db": 1, "utolso_uzenet": "2026-11-14 09:00:00"})
+                                       "uzenet_db": 1, "utolso_uzenet": "2026-11-14 09:00:00",
+                                       "frappe_lap": None})
         self.tarol("Felmero Feature", {"name": "FT-00002", "cim": "Idegen munka", "projekt": "FP-00002",
                                        "crm_organization": MAS_CEG, "allapot": "Interjú", "elemek": [],
                                        "bizonyitekok": [], "hivatkozasok": [], "teljesseg_szazalek": 0,

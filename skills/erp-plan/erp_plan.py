@@ -602,6 +602,252 @@ def ellenoriz(kontextus, testverek, kimeno_db, ma):
     return talalatok
 
 
+# ---------------------------------------------------------------------------
+# Frappe-kérdésbank, Frappe-lap, CONTEXT-vázlat (4.4). Tiszta függvények.
+# ---------------------------------------------------------------------------
+
+FRAPPE_TEMAK = [
+    {"kod": "FR-ADAT", "cim": "Nyilvántartott adatok", "kotelezo": True,
+     "mit_kell_tudni": "Milyen dolgokról vezet nyilvántartást, mindegyikről milyen adatot, mi kötelező, mi nem ismétlődhet, mi kapcsolódik mihez.",
+     "kerdesek": ["Sorold fel, milyen dolgokat tartanál nyilván ebben a megoldásban, és mindegyikről milyen adatokat írnál fel.",
+                  "Melyik adat nélkül nem menthető el egy ilyen tétel, és melyikből nem lehet kettő egyforma?",
+                  "Mutass egy valódi példát: hogyan néz ki ma egy ilyen sor a táblázatodban vagy a papíron?"]},
+    {"kod": "FR-MEGLEVO", "cim": "Ami már megvan", "kotelezo": False,
+     "mit_kell_tudni": "Mit használ ma ugyanerre a rendszerünkben vagy máshol, és mit kell ebből megtartani.",
+     "kerdesek": ["Mit használtok ma erre: a rendszer melyik részét, táblázatot, más programot?",
+                  "Mi az, ami a mostani megoldásban jól működik, és maradjon így?"]},
+    {"kod": "FR-JOG", "cim": "Ki mit láthat és tehet", "kotelezo": True,
+     "mit_kell_tudni": "Szerepkörönként: ki látja, ki rögzíti, ki módosítja, ki törölheti; belép-e külső ember.",
+     "kerdesek": ["Kik dolgoznak majd vele, és ki mit tehet: ki rögzít, ki hagy jóvá, ki csak nézi?",
+                  "Van-e olyan adat, amit nem láthat mindenki?",
+                  "Belép-e a rendszerbe külső ember, például ügyfél vagy beszállító?"]},
+    {"kod": "FR-FOLYAMAT", "cim": "Állapotok és jóváhagyás", "kotelezo": False,
+     "mit_kell_tudni": "A tétel állapotai az elejétől a végéig, ki léptetheti tovább, milyen feltétellel, vissza lehet-e lépni.",
+     "kerdesek": ["Milyen állapotokon megy át egy tétel az elejétől a végéig?",
+                  "Ki léptetheti a következő állapotba, és mi kell hozzá?",
+                  "Vissza lehet-e küldeni, és akkor mi történik?"]},
+    {"kod": "FR-SZABALY", "cim": "Szabályok és számítások", "kotelezo": False,
+     "mit_kell_tudni": "A számítások pontos szabálya példával, kerekítés, határértékek, tiltott esetek.",
+     "kerdesek": ["Van-e, amit a rendszernek ki kell számolnia? Mondd el a szabályt egy valódi példán.",
+                  "Mit nem szabad engednie a rendszernek akkor sem, ha valaki megpróbálja?"]},
+    {"kod": "FR-ERTESITES", "cim": "Értesítések", "kotelezo": False,
+     "mit_kell_tudni": "Ki kap értesítést, milyen eseménynél, milyen csatornán, mi álljon benne.",
+     "kerdesek": ["Kinek kell szólnia a rendszernek, és mikor?",
+                  "Hol érje el: e-mailben, a rendszeren belül, máshol? Mi legyen az üzenetben?"]},
+    {"kod": "FR-JELENTES", "cim": "Listák, jelentések, nyomtatványok", "kotelezo": False,
+     "mit_kell_tudni": "Milyen lista vagy összesítés kell, milyen oszlopokkal és szűrőkkel, kell-e nyomtatott vagy letölthető forma.",
+     "kerdesek": ["Milyen listát vagy összesítést néznél meg rendszeresen, és milyen oszlopok legyenek benne?",
+                  "Mire szűrnél vagy csoportosítanál?",
+                  "Kell-e nyomtatni vagy letölteni valamit, és kinek megy?"]},
+    {"kod": "FR-INTEGRACIO", "cim": "Kapcsolat más rendszerekkel", "kotelezo": False,
+     "mit_kell_tudni": "Melyik rendszerből jön vagy melyikbe megy adat, milyen gyakran, ki felel a másik oldalért, mi legyen hiba esetén.",
+     "kerdesek": ["Melyik másik programból kellene adatot átvenni, vagy melyikbe átadni?",
+                  "Milyen gyakran, és ki felel a másik rendszerért?",
+                  "Mi történjen, ha a másik rendszer éppen nem érhető el?"]},
+    {"kod": "FR-MIGRACIO", "cim": "Meglévő adatok átvétele", "kotelezo": False,
+     "mit_kell_tudni": "Van-e átveendő régi adat, honnan, mennyi, milyen formában, ki ellenőrzi az átvétel után.",
+     "kerdesek": ["Van-e meglévő adat, amit át kell hozni? Honnan, és nagyjából mennyi?",
+                  "Milyen formában van ma, és ki tudja megmondani az átvétel után, hogy jó-e?"]},
+    {"kod": "FR-FELULET", "cim": "Hol és hogyan használják", "kotelezo": False,
+     "mit_kell_tudni": "Számítógépen vagy telefonon, irodában vagy terepen, milyen nyelven, milyen lépésekben.",
+     "kerdesek": ["Hol használják majd: irodában gépen, vagy terepen telefonon?",
+                  "Milyen nyelven legyen a felület?",
+                  "Mi az a három lépés, amit a leggyakrabban csinálnak majd benne?"]},
+    {"kod": "FR-UZEM", "cim": "Mennyiség és megőrzés", "kotelezo": False,
+     "mit_kell_tudni": "Havi tételszám, felhasználók száma, csúcsidőszak, meddig kell megőrizni az adatot.",
+     "kerdesek": ["Nagyjából hány ilyen tétel keletkezik egy hónapban, és hányan dolgoznak vele egyszerre?",
+                  "Van-e időszak, amikor sokkal több a munka?",
+                  "Meddig kell megőrizni ezeket az adatokat?"]},
+    {"kod": "FR-PROBA", "cim": "Elfogadási próbák", "kotelezo": True,
+     "mit_kell_tudni": "Legalább egy teljes próba: kiinduló adat, lépések, várt eredmény; és legalább egy dolog, aminek soha nem szabad megtörténnie.",
+     "kerdesek": ["Mondj egy valódi esetet az elejétől a végéig: mivel indul, mit csinál az ember, és mit kell látnia a végén?",
+                  "Mi az, aminek soha nem szabad megtörténnie ebben a megoldásban?",
+                  "Milyen adaton próbálnád ki átvételkor?"]},
+]
+FRAPPE_TEMA_MAP = {t["kod"]: t for t in FRAPPE_TEMAK}
+FRAPPE_LAP_VERZIO = 1
+FRAPPE_ALLAPOTOK = ("Kész", "Nem releváns")
+CONTEXT_FAJL_NEV = "CONTEXT-vazlat.md"
+CONTEXT_LIGHT_WAY = "TODO (engineer): how far the site's existing modules get without code; one line per intent line."
+CONTEXT_RIGOR = "TODO (engineer): light or heavy."
+CONTEXT_RIGOR_HINT = "Hint: permissions or data migration are in scope, heavy by default."
+CONTEXT_TODO = "TODO (engineer)"
+CONTEXT_NINCS = "- nincs nyitott pont"
+
+
+def ures_lap():
+    return {"verzio": FRAPPE_LAP_VERZIO, "kihagyva": False, "temak": {}}
+
+
+def lap_szovegbol(szoveg):
+    """A szerver frappe_lap mezőjének szövege -> lap. Üres szöveg: üres lap."""
+    if not szoveg:
+        return ures_lap()
+    try:
+        adat = json.loads(szoveg)
+    except ValueError:
+        raise FelmeroHiba("FELMERO_NEM_ELERHETO", "A Frappe-lap nem olvasható.", KILEP_HASZNALAT)
+    if not isinstance(adat, dict):
+        raise FelmeroHiba("FELMERO_NEM_ELERHETO", "A Frappe-lap nem olvasható.", KILEP_HASZNALAT)
+    adat.setdefault("kihagyva", False)
+    adat.setdefault("temak", {})
+    return adat
+
+
+def frappe_nezet(lap):
+    """A lap kérdésbankkal összevetve. lap None: a mező nem érhető el a szerveren."""
+    if lap is None:
+        return {"elerheto": False, "kihagyva": False, "kesz_db": 0, "ossz_db": len(FRAPPE_TEMAK), "temak": []}
+    temak = lap.get("temak") or {}
+    sorok = []
+    for t in FRAPPE_TEMAK:
+        r = temak.get(t["kod"])
+        sorok.append({"kod": t["kod"], "cim": t["cim"], "kotelezo": t["kotelezo"],
+                      "mit_kell_tudni": t["mit_kell_tudni"], "kerdesek": list(t["kerdesek"]),
+                      "allapot": r.get("allapot") if r else "Hiányzik",
+                      "ertek": (r or {}).get("ertek", "")})
+    return {"elerheto": True, "kihagyva": bool(lap.get("kihagyva")),
+            "kesz_db": sum(1 for s in sorok if s["allapot"] != "Hiányzik"), "ossz_db": len(sorok), "temak": sorok}
+
+
+def frappe_idezetek(lap):
+    """A lap idézetei az INK-17 szabálynak: [{tema, cim, idezet}]."""
+    ki = []
+    for t in FRAPPE_TEMAK:
+        r = (lap or {}).get("temak", {}).get(t["kod"])
+        for i in (r or {}).get("idezetek") or []:
+            ki.append({"tema": t["kod"], "cim": t["cim"], "idezet": i.get("idezet")})
+    return ki
+
+
+def _kvota(sor):
+    return "> „%s” (üzenet #%s)" % (normal(sor.get("idezet")), sor.get("uzenet_sorszam"))
+
+
+def _elem_sor(kod, el, biz):
+    """Egy elem egy tartalmi sora, alatta az érvényes idézetei."""
+    e = el.get(kod)
+    cim = CIMEK[kod]
+    if not e or not e.get("ertek"):
+        return ["- **%s %s:** %s" % (kod, cim, CONTEXT_TODO)]
+    ertek = " / ".join(sorok_szovegbol(e["ertek"]))
+    if e.get("datum"):
+        ertek += " (%s)" % e["datum"]
+    sorok =["- **%s %s:** %s" % (kod, cim, ertek)]
+    sorok += [_kvota(b) for b in biz if b.get("elem") == kod and b.get("ervenyes")]
+    return sorok
+
+
+def _tema_sor(tema, t):
+    """Egy Frappe-téma sora, alatta az idézetei; Nem releváns esetén a kliens jelölésével."""
+    if not t or t.get("allapot") == "Hiányzik":
+        return ["- %s" % CONTEXT_TODO]
+    idezetek = [_kvota(i) for i in (t.get("idezetek") or [])]
+    if t["allapot"] == "Nem releváns":
+        return ["- Not relevant (client): %s" % tema["cim"]] + idezetek
+    return ["- **%s:** %s" % (tema["cim"], " / ".join(sorok_szovegbol(t.get("ertek", ""))) or CONTEXT_TODO)] + idezetek
+
+
+def _szakasz(sorok):
+    return sorok if sorok else ["- %s" % CONTEXT_TODO]
+
+
+def _intent(el, biz, lap_temak):
+    """Legfeljebb négy számozott sor (D1 és FR-PROBA), utána a Must not sor (B3 első tétele)."""
+    numerált = []
+    for s in sorok_szovegbol((el.get("D1") or {}).get("ertek", "")):
+        numerált.append((s, [_kvota(b) for b in biz if b.get("elem") == "D1" and b.get("ervenyes")]))
+    proba = lap_temak.get("FR-PROBA") or {}
+    if proba.get("allapot") == "Kész":
+        for s in sorok_szovegbol(proba.get("ertek", "")):
+            numerált.append((s, [_kvota(i) for i in proba.get("idezetek") or []]))
+    numerált = numerált[:4]
+    sorok = []
+    for i, (s, idezetek) in enumerate(numerált, 1):
+        sorok.append("%d. %s" % (i, s))
+        sorok += idezetek
+    if not sorok:
+        sorok.append("1. %s" % CONTEXT_TODO)
+    tetel = tetelek_szovegbol((el.get("B3") or {}).get("ertek", ""))
+    if tetel:
+        sorok.append("Must not: %s" % tetel[0])
+        sorok += [_kvota(b) for b in biz if b.get("elem") == "B3" and b.get("ervenyes")][:1]
+    else:
+        sorok.append("Must not: %s" % CONTEXT_TODO)
+    return sorok
+
+
+def context_md(k, lap, ma):
+    """A CONTEXT-vázlat (4.4). Tiszta, determinisztikus: ugyanaz a bemenet, ugyanaz a bájt.
+    k: name, cim, allapot, projekt, projekt_cim, elemek, bizonyitekok, hianylista, talalatok.
+    lap: a Frappe-lap (vagy ures_lap()); ma: datetime.date."""
+    el = {e["kod"]: e for e in k.get("elemek") or []}
+    biz = k.get("bizonyitekok") or []
+    nezet = frappe_nezet(lap or ures_lap())
+    temak = {t["kod"]: t for t in nezet["temak"]}
+    lap_temak = (lap or {}).get("temak") or {}
+
+    def tema(kod):
+        t = temak.get(kod)
+        if t is not None:
+            t = dict(t, idezetek=(lap_temak.get(kod) or {}).get("idezetek") or [])
+        return _szakasz(_tema_sor(FRAPPE_TEMA_MAP[kod], t))
+
+    def elemek(kodok):
+        ki = []
+        for kod in kodok:
+            ki += _elem_sor(kod, el, biz)
+        return ki
+
+    def temak_sorai(kodok):
+        ki = []
+        for kod in kodok:
+            ki += tema(kod)
+        return ki
+
+    hianyzo = [t for t in FRAPPE_TEMAK if temak.get(t["kod"], {}).get("allapot") == "Hiányzik"]
+    nyitott = [("- Hiányzik: %s. %s" % (t["cim"], t["mit_kell_tudni"])) for t in hianyzo]
+    nyitott += [("- %s %s: %s" % (h["kod"], h["cim"], h["mit_kell_tudni"]))
+                for h in (k.get("hianylista") or {}).get("hianyzik", [])]
+    nyitott += ["- %s: %s" % (t.get("szabaly"), t.get("leiras")) for t in k.get("talalatok") or []]
+
+    szakaszok = [
+        ("## Jira / Ticket", ["- Feature: %s" % k["name"],
+                              "- Projekt: %s (%s)" % (k.get("projekt", ""), k.get("projekt_cim", "")),
+                              "- Állapot: %s" % k.get("allapot", "")]),
+        ("## Business Requirements", elemek(["B1", "B2", "UZ", "D2", "D3", "D4", "A1"])),
+        ("## Intent", _intent(el, biz, lap_temak)),
+        ("## Data model (DocTypes and fields)", temak_sorai(["FR-ADAT"])),
+        ("## Permissions", temak_sorai(["FR-JOG"])),
+        ("## Workflow", temak_sorai(["FR-FOLYAMAT"])),
+        ("## Validation and calculations", temak_sorai(["FR-SZABALY"])),
+        ("## Notifications", temak_sorai(["FR-ERTESITES"])),
+        ("## Reports and print", temak_sorai(["FR-JELENTES"])),
+        ("## Integrations", temak_sorai(["FR-INTEGRACIO"]) + elemek(["B4"])),
+        ("## Data migration", temak_sorai(["FR-MIGRACIO"])),
+        ("## UX / Design Decisions", elemek(["UX"]) + temak_sorai(["FR-FELULET"])),
+        ("## Technical Decisions", elemek(["TD"]) + temak_sorai(["FR-MEGLEVO", "FR-UZEM"])),
+        ("## Light way", [CONTEXT_LIGHT_WAY]),
+        ("## Acceptance tests", temak_sorai(["FR-PROBA"]) + elemek(["D1"])),
+        ("## Exclusions", elemek(["B3", "KZ"])),
+        ("## Open questions", nyitott or [CONTEXT_NINCS]),
+        ("## Timeline (client's wish, not a commitment)", elemek(["C1", "C2"])),
+        ("## Rigor", [CONTEXT_RIGOR] + ([CONTEXT_RIGOR_HINT] if any(
+            temak.get(kod, {}).get("allapot") == "Kész" for kod in ("FR-JOG", "FR-MIGRACIO")) else [])),
+    ]
+    sorok = ["# %s: Context (DRAFT)" % k.get("cim", ""), "",
+             "Gépileg összeállítva a kliens szavaiból, %s. A mérnök ellenőrzi és egészíti ki." % ma.isoformat()]
+    for cim, tartalom in szakaszok:
+        sorok += ["", cim] + _szakasz(tartalom)
+    return "\n".join(sorok) + "\n"
+
+
+def nyitott_db(szoveg):
+    """A „Open questions” szakasz tartalmi sorainak száma (a „nincs” sor nélkül)."""
+    resz = szoveg.split("## Open questions", 1)[-1].split("## Timeline", 1)[0]
+    return sum(1 for s in resz.splitlines() if s.startswith("- ") and s != CONTEXT_NINCS)
+
+
 def _valasz(feature, lepes, skill, szoveg, parancs=None, reszletek=None):
     return {"feature": feature, "lepes": lepes, "skill": skill, "szoveg": szoveg,
             "parancs": parancs, "reszletek": reszletek or {}}
@@ -1081,6 +1327,18 @@ class Proto:
             raise FelmeroHiba("FELMERO_NEM_TALALHATO", "A fájl nem található.", KILEP_MEGTAGADVA)
         return sorok[0]["file_url"]
 
+    def frappe_lap_nyers(self, nev):
+        """A frappe_lap mező szövege. None, ha a szerver nem adja vissza a mezőt (a mező nincs a demón)."""
+        try:
+            sorok = self.lista("Felmero Feature", ["name", "frappe_lap"], [["name", "=", nev]], limit=1)
+        except FelmeroHiba as h:
+            if h.http_kod in (400, 404, 417, 500):
+                return None
+            raise
+        if not sorok or "frappe_lap" not in sorok[0]:
+            return None
+        return sorok[0]["frappe_lap"] or ""
+
 
 class Atomi:
     """Váz: a későbbi atomi.felmero.api.* végpontok helye. Most minden parancs erre fut."""
@@ -1394,10 +1652,11 @@ def munka_reszlet(p, f):
     osz = p.osszefoglalok(f["name"])
     h = hianylista(el, len(osz), f.get("allapot"))
     kimeno_db = len(kimeno_olvas(f["name"]))
+    lap = frappe_lap_olvas(p, f)
     kontext = {"name": f["name"], "cim": f.get("cim") or "", "allapot": f.get("allapot"), "elemek": el,
                "bizonyitekok": biz, "uzenetek": uz,
                "osszefoglalo": {"verzio": osz[0]["verzio"], "uzenet_sorszamig": osz[0]["uzenet_sorszamig"]} if osz else None,
-               "hivatkozasok": hivatkozasok(p, f), "frappe_idezetek": [],
+               "hivatkozasok": hivatkozasok(p, f), "frappe_idezetek": frappe_idezetek(lap),
                "tarolt_szazalek": f.get("teljesseg_szazalek")}
     talalatok = ellenoriz(kontext, testverek(p, f), kimeno_db, datetime.date.today())
     elfogadott = set(helyi_olvas(f["name"])["elfogadott"])
@@ -1410,7 +1669,7 @@ def munka_reszlet(p, f):
             "pontositando": [{"kod": e["kod"], "cim": CIMEK.get(e["kod"], e["kod"]),
                               "megjegyzes": e.get("mernok_megjegyzes") or ""}
                              for e in el if e.get("mernok_allapot") == "Pontosítandó"],
-            "visszakuldes_indoka": f.get("visszakuldes_indoka"), "frappe": None}
+            "visszakuldes_indoka": f.get("visszakuldes_indoka"), "frappe": frappe_nezet(lap)}
 
 
 def kovetkezo_adat(p, feature):
@@ -1676,6 +1935,115 @@ def cmd_visszavon(p, a):
     return {"feature": a.feature, "allapot": "Lezárva"}
 
 
+def frappe_lap_olvas(p, f):
+    """A feature Frappe-lapja, vagy None, ha a mező nem érhető el."""
+    szoveg = p.frappe_lap_nyers(f["name"])
+    return None if szoveg is None else lap_szovegbol(szoveg)
+
+
+def frappe_lap_ment(p, f, lap):
+    """Írás után visszaolvassa: ha nem egyezik, FELMERO_NEM_ELERHETO."""
+    p.frissit("Felmero Feature", f["name"], {"frappe_lap": json.dumps(lap, ensure_ascii=False, sort_keys=True)})
+    vissza = p.frappe_lap_nyers(f["name"])
+    if vissza is None or lap_szovegbol(vissza) != lap_szovegbol(json.dumps(lap, ensure_ascii=False)):
+        raise FelmeroHiba("FELMERO_NEM_ELERHETO", "A mentés után a Frappe-lap nem olvasható vissza.", KILEP_HASZNALAT)
+
+
+def cmd_frappe_kerdesek(p, a):
+    if not a.feature:
+        return {"temak": [dict(t, kerdesek=list(t["kerdesek"])) for t in FRAPPE_TEMAK]}
+    f = p.feature(a.feature)
+    return dict({"feature": f["name"]}, **frappe_nezet(frappe_lap_olvas(p, f)))
+
+
+def cmd_frappe_lap(p, a):
+    f = p.feature(a.feature)
+    pr = p.egy("Felmero Projekt", f["projekt"])
+    irhato_projekt(pr)
+    irhato_feature(f)
+    lap = frappe_lap_olvas(p, f)
+    if lap is None:
+        raise FelmeroHiba("FELMERO_NEM_ELERHETO", "Ezen a szerveren a Frappe-lap nem érhető el.", KILEP_HASZNALAT)
+    if a.kihagy or a.folytat:
+        lap["kihagyva"] = bool(a.kihagy)
+        frappe_lap_ment(p, f, lap)
+        n = frappe_nezet(lap)
+        return {"kihagyva": n["kihagyva"], "kesz_db": n["kesz_db"],
+                "hianyzik": [t["kod"] for t in n["temak"] if t["allapot"] == "Hiányzik"]}
+    if not a.tema or a.tema not in FRAPPE_TEMA_MAP:
+        raise FelmeroHiba("FELMERO_ISMERETLEN_ELEM", "Ismeretlen téma. A kódok: " + ", ".join(FRAPPE_TEMA_MAP) + ".",
+                          KILEP_HASZNALAT)
+    idezetek = a.idezet or []
+    if not idezetek:
+        raise FelmeroHiba("FELMERO_IDEZET_NINCS", "Legalább egy idézet kell a kliens üzenetéből. Nem mentettem semmit.",
+                          KILEP_MEGTAGADVA)
+    if len(idezetek) > IDEZET_DARAB_MAX:
+        raise FelmeroHiba("FELMERO_HOSSZ", "Legfeljebb %d idézet adható meg." % IDEZET_DARAB_MAX, KILEP_HASZNALAT)
+    for i in idezetek:
+        hiba = idezet_formai_hiba(i)
+        if hiba:
+            raise FelmeroHiba(hiba, "Az idézet túl rövid vagy túl hosszú.", KILEP_HASZNALAT)
+    uz = p.kliens_uzenetek(f["name"])
+    talalatok = []
+    for i in idezetek:
+        t = idezet_keres(i, uz)
+        if not t:
+            raise FelmeroHiba("FELMERO_IDEZET_NINCS", "Az idézet nem egyezik egy kliens-üzenettel sem. Nem mentettem semmit.",
+                              KILEP_MEGTAGADVA)
+        talalatok.append({"idezet": i, "uzenet": t[0], "uzenet_sorszam": t[1]})
+    if a.nem_relevans:
+        allapot, ertek = "Nem releváns", ""
+    else:
+        if not a.ertek_fajl:
+            raise FelmeroHiba("FELMERO_ELEM_ADAT", "Az értékhez add meg a --ertek-fajl kapcsolót, vagy a --nem-relevans kapcsolót.",
+                              KILEP_HASZNALAT)
+        ertek = beolvas(a.ertek_fajl).strip()
+        if not ertek or len(ertek) > UZENET_MAX:
+            raise FelmeroHiba("FELMERO_URES", "Az érték nem lehet üres, és legfeljebb %d karakter lehet." % UZENET_MAX,
+                              KILEP_HASZNALAT)
+        allapot = "Kész"
+    lap["temak"][a.tema] = {"allapot": allapot, "ertek": ertek, "idezetek": talalatok, "modositva": most()}
+    frappe_lap_ment(p, f, lap)
+    n = frappe_nezet(lap)
+    return {"tema": a.tema, "allapot": allapot, "kesz_db": n["kesz_db"],
+            "hianyzik": [t["kod"] for t in n["temak"] if t["allapot"] == "Hiányzik"]}
+
+
+def context_feltolt(p, pr, f, szoveg):
+    """A vázlat csatolása a munkához: Markdown, a demón .md.txt néven megy, a nyilvántartásban CONTEXT-vazlat.md marad."""
+    bajt = szoveg.encode("utf-8")
+    file_doc = p.feltolt_bajt("Felmero Feature", f["name"], CONTEXT_FAJL_NEV + ".txt", bajt, "text/plain")
+    fa = p.uj("Felmero Fajl", {
+        "fajl_nev": CONTEXT_FAJL_NEV, "projekt": f["projekt"], "feature": f["name"],
+        "crm_organization": pr["crm_organization"], "tipus": "szoveg", "mime": "text/markdown", "meret": len(bajt),
+        "sha256": hashlib.sha256(bajt).hexdigest(), "feltoltotte": p.user, "feltolto_nev": p.nev,
+        "elsodleges_forma": "markdown", "file": file_doc["name"], "markdown_file": file_doc["name"],
+        "markdown_meret": len(bajt), "markdown_minoseg": "jó", "atalakitas_allapot": "Nem kell",
+        "atiras_allapot": "Nem kell"})
+    return fa["name"]
+
+
+def cmd_context_vazlat(p, a):
+    f = p.feature(a.feature)
+    pr = p.egy("Felmero Projekt", f["projekt"])
+    if a.feltolt:
+        irhato_feature(f)
+    el, biz, h, _ = ertekeles(p, f)
+    talalatok = [t for t in munka_reszlet(p, f)["talalatok"] if not t.get("elfogadva")]
+    lap = frappe_lap_olvas(p, f) or ures_lap()
+    k = {"name": f["name"], "cim": f.get("cim") or "", "allapot": f.get("allapot"), "projekt": f["projekt"],
+         "projekt_cim": pr.get("cim") or "", "elemek": el, "bizonyitekok": biz, "hianylista": h,
+         "talalatok": talalatok}
+    szoveg = context_md(k, lap, datetime.date.today())
+    os.makedirs(os.path.dirname(os.path.abspath(a.ki)), exist_ok=True)
+    fd = os.open(a.ki, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(szoveg.encode("utf-8"))
+    os.chmod(a.ki, 0o600)
+    fajl = context_feltolt(p, pr, f, szoveg) if a.feltolt else None
+    return {"ki": a.ki, "sorok": szoveg.count("\n"), "nyitott_db": nyitott_db(szoveg), "fajl": fajl}
+
+
 KEZELOK = {
     "kivagyok": cmd_kivagyok, "hozzaferes": cmd_hozzaferes, "projektek": cmd_projektek, "projekt": cmd_projekt,
     "uj-projekt": cmd_uj_projekt, "projekt-frissit": cmd_projekt_frissit, "archival": cmd_archival,
@@ -1687,6 +2055,7 @@ KEZELOK = {
     "forma": cmd_forma, "bekuld": cmd_bekuld, "visszavon": cmd_visszavon,
     "munkak": cmd_munkak,
     "ellenorzes": cmd_ellenorzes,
+    "frappe-kerdesek": cmd_frappe_kerdesek, "frappe-lap": cmd_frappe_lap, "context-vazlat": cmd_context_vazlat,
 }
 
 
@@ -1827,6 +2196,23 @@ def build_parser():
     x.add_argument("--elfogad", action="append", default=[], metavar="UJJLENYOMAT",
                    help="figyelem súlyú találat elfogadása (többször is adható)")
     x.add_argument("--mind", action="store_true", help="az elfogadott találatokat is mutatja")
+
+    x = sub.add_parser("frappe-kerdesek", help="a 12 Frappe-téma kérdései (FT-vel: a feature állapota)")
+    x.add_argument("feature", nargs="?", type=nev_tipus("FT"))
+
+    x = sub.add_parser("frappe-lap", help="egy Frappe-téma rögzítése idézettel, vagy kihagyás")
+    x.add_argument("feature", type=nev_tipus("FT"))
+    x.add_argument("--tema", help="a téma kódja, pl. FR-ADAT")
+    x.add_argument("--ertek-fajl", help="a téma értéke (szöveg) fájlból")
+    x.add_argument("--idezet", action="append", help="szó szerinti idézet a kliens üzenetéből (többször is adható)")
+    x.add_argument("--nem-relevans", action="store_true", help="a téma a kliensnél nem releváns (idézet kell)")
+    x.add_argument("--kihagy", action="store_true", help="az egész Frappe-lap kihagyása")
+    x.add_argument("--folytat", action="store_true", help="a kihagyás visszavonása")
+
+    x = sub.add_parser("context-vazlat", help="a CONTEXT-vázlat Markdownban (determinisztikus)")
+    x.add_argument("feature", type=nev_tipus("FT"))
+    x.add_argument("--ki", required=True, help="a fájl helye (600-as jog)")
+    x.add_argument("--feltolt", action="store_true", help="csatolja a munkához CONTEXT-vazlat.md néven")
 
     x = sub.add_parser("kovetkezo", help="a következő lépés: egy mondat és a parancs")
     x.add_argument("feature", nargs="?", type=nev_tipus("FT"))
